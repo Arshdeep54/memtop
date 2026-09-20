@@ -4,8 +4,8 @@ A tiny Linux CLI that shows which processes are using the most memory — ordere
 biggest-first, grouped by application, or as a flat per-process table. It also
 has an interactive arrow-key mode to kill a selected process.
 
-It's a thin wrapper over `ps`, `/proc/meminfo`, and `kill`, so the numbers it
-shows are exactly what the kernel reports.
+It reads `/proc` directly, so the numbers it shows are exactly what the kernel
+reports — no `ps` parsing in between.
 
 ## Features
 
@@ -20,7 +20,7 @@ shows are exactly what the kernel reports.
 ## Requirements
 
 - Linux
-- `ps`, `kill` (from `procps`, present on essentially every distro)
+- `kill` (for the interactive kill mode; present on essentially every distro)
 - Rust (to build) — edition 2024, so Rust 1.85+
 
 ## Install

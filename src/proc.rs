@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::process::{exit, Command};
+use std::path::Path;
 
 use crate::cli::{Args, SortKey};
+use crate::procfs;
 use crate::types::{Group, Row};
 
 const INTERPRETERS: &[&str] = &[
@@ -10,52 +11,58 @@ const INTERPRETERS: &[&str] = &[
     "bun", "ruby", "perl", "php", "java", "sh", "bash", "dash", "zsh", "fish",
 ];
 
+// ponytail: hardcode CLK_TCK; sysconf(_SC_CLK_TCK) is the upgrade path.
+// 100 is the value on every Linux kernel in practice.
+const CLK_TCK: f64 = 100.0;
+
 pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
-    let output = Command::new("ps")
-        .args(["-eo", "pid=,rss=,vsz=,pcpu=,nlwp=,user=,args="])
-        .output();
+    let root = Path::new("/proc");
+    let uptime = procfs::read_uptime(root);
+    let uid_map = procfs::read_uid_map();
+    let pids = procfs::list_pids(root);
 
-    let stdout = match output {
-        Ok(o) if o.status.success() => o.stdout,
-        _ => {
-            eprintln!("error: failed to run `ps`");
-            exit(1);
-        }
-    };
+    let mut rows = Vec::with_capacity(pids.len());
 
-    let text = String::from_utf8_lossy(&stdout);
-    let mut rows = Vec::with_capacity(text.lines().count());
-
-    for line in text.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        if tokens.len() < 7 {
-            continue;
-        }
-
-        let (Ok(pid), Ok(rss_kib), Ok(vsz_kib), Ok(cpu), Ok(threads)) = (
-            tokens[0].parse::<u32>(),
-            tokens[1].parse::<u64>(),
-            tokens[2].parse::<u64>(),
-            tokens[3].parse::<f32>(),
-            tokens[4].parse::<usize>(),
-        ) else {
+    for pid in pids {
+        // races: processes vanish between readdir and read — skip, don't fail
+        let Some(stat) = procfs::read_stat(root, pid) else {
             continue;
         };
-
-        let args_str = tokens[6..].join(" ");
-        if args_str.starts_with('[') {
+        let Some(status) = procfs::read_status(root, pid) else {
+            continue;
+        };
+        let Some(argv) = procfs::read_cmdline(root, pid) else {
+            continue;
+        };
+        // empty cmdline = kernel thread (or zombie), as before
+        if argv.is_empty() {
             continue;
         }
+
+        let args_str = argv.join(" ");
+        let cpu_ticks = (stat.utime + stat.stime) as f64 / CLK_TCK;
+        let elapsed = uptime - stat.starttime as f64 / CLK_TCK;
+        let cpu = if elapsed > 0.0 {
+            (cpu_ticks / elapsed * 100.0) as f32
+        } else {
+            0.0
+        };
 
         rows.push(Row {
             pid,
-            user: tokens[5].to_string(),
-            rss: rss_kib * 1024,
-            virt: vsz_kib * 1024,
+            user: uid_map
+                .get(&status.uid)
+                .cloned()
+                .unwrap_or_else(|| status.uid.to_string()),
+            rss: status.rss.unwrap_or(0),
+            virt: status.virt.unwrap_or(0),
             cpu,
-            threads,
+            threads: stat.num_threads,
             cmd: command_key(&args_str),
             args: args_str,
+            ppid: stat.ppid,
+            start_time: stat.starttime,
+            tty_nr: stat.tty_nr,
         });
     }
 

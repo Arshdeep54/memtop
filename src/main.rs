@@ -3,6 +3,7 @@ mod format;
 mod kill;
 mod mem;
 mod proc;
+mod procfs;
 mod render;
 mod types;
 
