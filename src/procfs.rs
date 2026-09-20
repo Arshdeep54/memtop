@@ -163,6 +163,43 @@ pub(crate) fn parse_passwd(text: &str) -> HashMap<u32, String> {
     map
 }
 
+/// `Pss:`, `Private_Clean:` + `Private_Dirty:` (USS), `Swap:` from
+/// `/proc/<pid>/smaps_rollup` (kernel 4.14+), in bytes. Unreadable
+/// (`EACCES`, `ENOENT`) returns `None`.
+pub(crate) fn read_smaps_rollup(root: &Path, pid: u32) -> Option<SmapsRollup> {
+    let path = root.join(pid.to_string()).join("smaps_rollup");
+    let text = fs::read_to_string(path).ok()?;
+    parse_smaps_rollup(&text)
+}
+
+#[derive(Default)]
+pub(crate) struct SmapsRollup {
+    pub(crate) pss: Option<u64>,
+    pub(crate) uss: Option<u64>,
+    pub(crate) swap: Option<u64>,
+}
+
+pub(crate) fn parse_smaps_rollup(s: &str) -> Option<SmapsRollup> {
+    let mut out = SmapsRollup::default();
+    for line in s.lines() {
+        let Some((key, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let Some(kb) = parse_kb_line(rest) else {
+            continue;
+        };
+        match key.trim() {
+            "Pss" => out.pss = Some(kb),
+            "Private_Clean" => out.uss = Some(out.uss.unwrap_or(0) + kb),
+            "Private_Dirty" => out.uss = Some(out.uss.unwrap_or(0) + kb),
+            "Swap" => out.swap = Some(kb),
+            _ => {}
+        }
+    }
+    out.pss?;
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +318,33 @@ mod tests {
         assert_eq!(map.get(&0).map(String::as_str), Some("root"));
         assert_eq!(map.get(&1000).map(String::as_str), Some("cosign"));
         assert_eq!(map.get(&5), None);
+    }
+
+    #[test]
+    fn parse_smaps_rollup_fields() {
+        let text = "Rss:              100 kB\nPss:               80 kB\nPrivate_Clean:     10 kB\nPrivate_Dirty:     20 kB\nSwap:              12 kB\nSwapPss:            2 kB\n";
+        let r = parse_smaps_rollup(text).unwrap();
+        assert_eq!(r.pss, Some(80 * 1024));
+        assert_eq!(r.uss, Some(30 * 1024)); // clean + dirty
+        assert_eq!(r.swap, Some(12 * 1024));
+    }
+
+    #[test]
+    fn parse_smaps_rollup_dirty_only() {
+        let r = parse_smaps_rollup("Pss: 5 kB\nPrivate_Dirty: 7 kB\n").unwrap();
+        assert_eq!(r.uss, Some(7 * 1024));
+    }
+
+    #[test]
+    fn parse_smaps_rollup_no_pss_is_none() {
+        assert!(parse_smaps_rollup("Rss: 100 kB\n").is_none());
+        assert!(parse_smaps_rollup("").is_none());
+    }
+
+    #[test]
+    fn read_smaps_rollup_missing_file_is_none() {
+        let root = fixture_root("smaps-missing");
+        assert!(read_smaps_rollup(&root, 1).is_none());
+        fs::remove_dir_all(&root).ok();
     }
 }

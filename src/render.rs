@@ -24,11 +24,74 @@ pub(crate) fn render_system_summary(mem: &MemInfo, args: &Args) -> String {
     out
 }
 
-pub(crate) fn render_json(rows: &[Row]) -> String {
+/// A right- or left-aligned table column; cells must be one per row.
+struct Col {
+    header: &'static str,
+    cells: Vec<String>,
+    right: bool,
+}
+
+fn render_columns(cols: &[Col]) -> String {
+    let widths: Vec<usize> = cols
+        .iter()
+        .map(|c| {
+            c.cells
+                .iter()
+                .map(|s| s.len())
+                .chain(std::iter::once(c.header.len()))
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+
+    let last = cols.len().saturating_sub(1);
+    let mut out = String::with_capacity(cols.len() * 16 * (cols[0].cells.len() + 2));
+
+    for (i, c) in cols.iter().enumerate() {
+        if i > 0 {
+            out.push_str("  ");
+        }
+        if c.right {
+            out.push_str(&format!("{:>w$}", c.header, w = widths[i]));
+        } else if i == last {
+            out.push_str(c.header);
+        } else {
+            out.push_str(&format!("{:<w$}", c.header, w = widths[i]));
+        }
+    }
+    out.push('\n');
+
+    for row in 0..cols[0].cells.len() {
+        for (i, c) in cols.iter().enumerate() {
+            if i > 0 {
+                out.push_str("  ");
+            }
+            if c.right {
+                out.push_str(&format!("{:>w$}", c.cells[row], w = widths[i]));
+            } else if i == last {
+                out.push_str(&c.cells[row]);
+            } else {
+                out.push_str(&format!("{:<w$}", c.cells[row], w = widths[i]));
+            }
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+fn mem_cell(value: Option<u64>, args: &Args) -> String {
+    match value {
+        Some(v) => format_bytes(v, args.bytes),
+        None => "-".to_string(),
+    }
+}
+
+pub(crate) fn render_json(rows: &[Row], args: &Args) -> String {
     let procs: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| {
-            serde_json::json!({
+            let mut v = serde_json::json!({
                 "pid": r.pid,
                 "cmd": r.cmd,
                 "args": r.args,
@@ -37,7 +100,13 @@ pub(crate) fn render_json(rows: &[Row]) -> String {
                 "vms_bytes": r.virt,
                 "cpu_percent": r.cpu,
                 "threads": r.threads,
-            })
+            });
+            if args.pss {
+                v["pss_bytes"] = serde_json::json!(r.pss);
+                v["uss_bytes"] = serde_json::json!(r.uss);
+                v["swap_bytes"] = serde_json::json!(r.swap);
+            }
+            v
         })
         .collect();
 
@@ -49,17 +118,23 @@ pub(crate) fn render_json(rows: &[Row]) -> String {
     out
 }
 
-pub(crate) fn render_groups_json(groups: &[Group], total_mem: u64) -> String {
+pub(crate) fn render_groups_json(groups: &[Group], args: &Args, total_mem: u64) -> String {
     let apps: Vec<serde_json::Value> = groups
         .iter()
         .map(|g| {
-            serde_json::json!({
+            let total = if args.pss { g.pss.unwrap_or(0) } else { g.rss };
+            let mut v = serde_json::json!({
                 "name": g.name,
                 "processes": g.count,
                 "rss_bytes": g.rss,
                 "vms_bytes": g.virt,
-                "mem_percent": pct_of(g.rss, total_mem),
-            })
+                "mem_percent": pct_of(total, total_mem),
+            });
+            if args.pss {
+                v["pss_bytes"] = serde_json::json!(g.pss);
+                v["unreadable"] = serde_json::json!(g.unreadable);
+            }
+            v
         })
         .collect();
 
@@ -72,144 +147,161 @@ pub(crate) fn render_groups_json(groups: &[Group], total_mem: u64) -> String {
 }
 
 pub(crate) fn render_groups(groups: &[Group], args: &Args, total_mem: u64) -> String {
-    const NAME_H: &str = "PROCESS";
-    const RSS_H: &str = "RSS";
-    const PCT_H: &str = "%MEM";
-    const CNT_H: &str = "PROCS";
+    let mem_header = if args.pss { "PSS" } else { "RSS" };
 
-    let rss_s: Vec<String> = groups
+    let mem_values: Vec<Option<u64>> = groups
         .iter()
-        .map(|g| format_bytes(g.rss, args.bytes))
+        .map(|g| if args.pss { g.pss } else { Some(g.rss) })
         .collect();
-    let pct_s: Vec<String> = groups
+    let mem_cells: Vec<String> = mem_values
         .iter()
-        .map(|g| format!("{:.1}%", pct_of(g.rss, total_mem)))
+        .enumerate()
+        .map(|(i, v)| {
+            let mut s = mem_cell(*v, args);
+            if args.pss && groups[i].unreadable > 0 {
+                s.push('~');
+            }
+            s
+        })
+        .collect();
+    let pct_s: Vec<String> = mem_values
+        .iter()
+        .map(|v| format!("{:.1}%", pct_of(v.unwrap_or(0), total_mem)))
         .collect();
     let cnt_s: Vec<String> = groups.iter().map(|g| g.count.to_string()).collect();
 
-    let mut name_w = NAME_H.len();
-    let mut rss_w = RSS_H.len();
-    let mut pct_w = PCT_H.len();
-    let mut cnt_w = CNT_H.len();
+    let cols = vec![
+        Col {
+            header: "PROCESS",
+            cells: groups.iter().map(|g| g.name.clone()).collect(),
+            right: false,
+        },
+        Col {
+            header: mem_header,
+            cells: mem_cells,
+            right: true,
+        },
+        Col {
+            header: "%MEM",
+            cells: pct_s,
+            right: true,
+        },
+        Col {
+            header: "PROCS",
+            cells: cnt_s,
+            right: true,
+        },
+    ];
 
-    for (i, g) in groups.iter().enumerate() {
-        name_w = name_w.max(g.name.len());
-        rss_w = rss_w.max(rss_s[i].len());
-        pct_w = pct_w.max(pct_s[i].len());
-        cnt_w = cnt_w.max(cnt_s[i].len());
-    }
-
-    let mut out = String::with_capacity(groups.len() * (name_w + 32));
-
-    out.push_str(&format!(
-        "{:<name_w$}  {:>rss_w$}  {:>pct_w$}  {:>cnt_w$}\n",
-        NAME_H, RSS_H, PCT_H, CNT_H,
-        name_w = name_w,
-        rss_w = rss_w,
-        pct_w = pct_w,
-        cnt_w = cnt_w,
-    ));
-
-    for (i, g) in groups.iter().enumerate() {
-        out.push_str(&format!(
-            "{:<name_w$}  {:>rss_w$}  {:>pct_w$}  {:>cnt_w$}\n",
-            g.name, rss_s[i], pct_s[i], cnt_s[i],
-            name_w = name_w,
-            rss_w = rss_w,
-            pct_w = pct_w,
-            cnt_w = cnt_w,
-        ));
-    }
-
-    out
+    render_columns(&cols)
 }
 
 pub(crate) fn render_table(rows: &[Row], args: &Args) -> String {
-    const PID_H: &str = "PID";
-    const USER_H: &str = "USER";
-    const MEM_H: &str = "MEM";
-    const VIRT_H: &str = "VIRT";
-    const CPU_H: &str = "CPU%";
-    const THR_H: &str = "THR";
-    const NAME_H: &str = "NAME";
-
     let pid_s: Vec<String> = rows.iter().map(|r| r.pid.to_string()).collect();
-    let rss_s: Vec<String> = rows
+    let mem_values: Vec<Option<u64>> = rows
         .iter()
-        .map(|r| format_bytes(r.rss, args.bytes))
+        .map(|r| if args.pss { r.pss } else { Some(r.rss) })
         .collect();
+    let mem_s: Vec<String> = mem_values.iter().map(|v| mem_cell(*v, args)).collect();
     let virt_s: Vec<String> = rows
         .iter()
         .map(|r| format_bytes(r.virt, args.bytes))
         .collect();
     let cpu_s: Vec<String> = rows.iter().map(|r| format!("{:.1}", r.cpu)).collect();
-    let thr_s: Vec<String> = rows.iter().map(|r| r.threads.to_string()).collect();
 
-    let mut pid_w = PID_H.len();
-    let mut user_w = USER_H.len();
-    let mut mem_w = MEM_H.len();
-    let mut virt_w = VIRT_H.len();
-    let mut cpu_w = CPU_H.len();
-    let mut thr_w = THR_H.len();
+    let mut cols = vec![
+        Col {
+            header: "PID",
+            cells: pid_s,
+            right: true,
+        },
+        Col {
+            header: "USER",
+            cells: rows.iter().map(|r| r.user.clone()).collect(),
+            right: false,
+        },
+        Col {
+            header: "MEM",
+            cells: mem_s,
+            right: true,
+        },
+        Col {
+            header: "VIRT",
+            cells: virt_s,
+            right: true,
+        },
+    ];
 
-    for (i, r) in rows.iter().enumerate() {
-        pid_w = pid_w.max(pid_s[i].len());
-        user_w = user_w.max(r.user.len());
-        mem_w = mem_w.max(rss_s[i].len());
-        virt_w = virt_w.max(virt_s[i].len());
-        cpu_w = cpu_w.max(cpu_s[i].len());
-        thr_w = thr_w.max(thr_s[i].len());
+    if args.pss {
+        cols.push(Col {
+            header: "USS",
+            cells: rows.iter().map(|r| mem_cell(r.uss, args)).collect(),
+            right: true,
+        });
+        cols.push(Col {
+            header: "SWAP",
+            cells: rows.iter().map(|r| mem_cell(r.swap, args)).collect(),
+            right: true,
+        });
     }
 
-    let mut out = String::with_capacity(rows.len() * 80);
+    cols.push(Col {
+        header: "CPU%",
+        cells: cpu_s,
+        right: true,
+    });
 
     if args.threads {
-        out.push_str(&format!(
-            "{:>pid_w$}  {:<user_w$}  {:>mem_w$}  {:>virt_w$}  {:>cpu_w$}  {:>thr_w$}  {}\n",
-            PID_H, USER_H, MEM_H, VIRT_H, CPU_H, THR_H, NAME_H,
-            pid_w = pid_w,
-            user_w = user_w,
-            mem_w = mem_w,
-            virt_w = virt_w,
-            cpu_w = cpu_w,
-            thr_w = thr_w,
-        ));
-    } else {
-        out.push_str(&format!(
-            "{:>pid_w$}  {:<user_w$}  {:>mem_w$}  {:>virt_w$}  {:>cpu_w$}  {}\n",
-            PID_H, USER_H, MEM_H, VIRT_H, CPU_H, NAME_H,
-            pid_w = pid_w,
-            user_w = user_w,
-            mem_w = mem_w,
-            virt_w = virt_w,
-            cpu_w = cpu_w,
-        ));
+        cols.push(Col {
+            header: "THR",
+            cells: rows.iter().map(|r| r.threads.to_string()).collect(),
+            right: true,
+        });
     }
 
-    for (i, r) in rows.iter().enumerate() {
-        if args.threads {
-            out.push_str(&format!(
-                "{:>pid_w$}  {:<user_w$}  {:>mem_w$}  {:>virt_w$}  {:>cpu_w$}  {:>thr_w$}  {}\n",
-                pid_s[i], r.user, rss_s[i], virt_s[i], cpu_s[i], thr_s[i], r.cmd,
-                pid_w = pid_w,
-                user_w = user_w,
-                mem_w = mem_w,
-                virt_w = virt_w,
-                cpu_w = cpu_w,
-                thr_w = thr_w,
-            ));
-        } else {
-            out.push_str(&format!(
-                "{:>pid_w$}  {:<user_w$}  {:>mem_w$}  {:>virt_w$}  {:>cpu_w$}  {}\n",
-                pid_s[i], r.user, rss_s[i], virt_s[i], cpu_s[i], r.cmd,
-                pid_w = pid_w,
-                user_w = user_w,
-                mem_w = mem_w,
-                virt_w = virt_w,
-                cpu_w = cpu_w,
-            ));
-        }
+    cols.push(Col {
+        header: "NAME",
+        cells: rows.iter().map(|r| r.cmd.clone()).collect(),
+        right: false,
+    });
+
+    render_columns(&cols)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_columns_alignment_and_widths() {
+        let cols = vec![
+            Col {
+                header: "PID",
+                cells: vec!["1".to_string(), "65535".to_string()],
+                right: true,
+            },
+            Col {
+                header: "NAME",
+                cells: vec!["a".to_string(), "bb".to_string()],
+                right: false,
+            },
+        ];
+        let out = render_columns(&cols);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "  PID  NAME");
+        assert_eq!(lines[1], "    1  a");
+        assert_eq!(lines[2], "65535  bb");
     }
 
-    out
+    #[test]
+    fn render_columns_missing_value() {
+        let cols = vec![Col {
+            header: "MEM",
+            cells: vec!["-".to_string(), "1.0 KiB".to_string()],
+            right: true,
+        }];
+        let out = render_columns(&cols);
+        assert_eq!(out.lines().next().unwrap(), "    MEM");
+        assert_eq!(out.lines().nth(1).unwrap(), "      -");
+    }
 }

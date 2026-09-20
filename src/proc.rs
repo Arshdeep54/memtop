@@ -63,7 +63,20 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
             ppid: stat.ppid,
             start_time: stat.starttime,
             tty_nr: stat.tty_nr,
+            pss: None,
+            uss: None,
+            swap: None,
         });
+
+        // smaps_rollup walks page tables — only pay for it when asked
+        if args.pss
+            && let Some(rollup) = procfs::read_smaps_rollup(root, pid)
+        {
+            let row = rows.last_mut().unwrap();
+            row.pss = rollup.pss;
+            row.uss = rollup.uss;
+            row.swap = rollup.swap;
+        }
     }
 
     if let Some(ref user) = args.user {
@@ -77,12 +90,21 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
     rows
 }
 
+/// The memory value a view sorts and filters on: PSS in --pss mode, RSS otherwise.
+pub(crate) fn mem_value(r: &Row, pss: bool) -> u64 {
+    if pss {
+        r.pss.unwrap_or(0)
+    } else {
+        r.rss
+    }
+}
+
 pub(crate) fn build_rows(mut rows: Vec<Row>, args: &Args, min_mem: Option<u64>) -> Vec<Row> {
     if let Some(min) = min_mem {
-        rows.retain(|r| r.rss >= min);
+        rows.retain(|r| mem_value(r, args.pss) >= min);
     }
 
-    sort_rows(&mut rows, args.sort);
+    sort_rows(&mut rows, args.sort, args.pss);
 
     if args.reverse {
         rows.reverse();
@@ -103,19 +125,31 @@ pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<
             rss: 0,
             virt: 0,
             count: 0,
+            pss: None,
+            unreadable: 0,
         });
         entry.rss += r.rss;
         entry.virt += r.virt;
         entry.count += 1;
+        if let Some(pss) = r.pss {
+            entry.pss = Some(entry.pss.unwrap_or(0) + pss);
+        } else {
+            entry.unreadable += 1;
+        }
     }
 
     let mut groups: Vec<Group> = map.into_values().collect();
 
     if let Some(min) = min_mem {
-        groups.retain(|g| g.rss >= min);
+        let total = |g: &Group| if args.pss { g.pss.unwrap_or(0) } else { g.rss };
+        groups.retain(|g| total(g) >= min);
     }
 
-    groups.sort_by_key(|g| Reverse(g.rss));
+    if args.pss {
+        groups.sort_by_key(|g| Reverse(g.pss.unwrap_or(0)));
+    } else {
+        groups.sort_by_key(|g| Reverse(g.rss));
+    }
 
     if args.reverse {
         groups.reverse();
@@ -155,9 +189,9 @@ fn command_key(args: &str) -> String {
     key
 }
 
-fn sort_rows(rows: &mut [Row], key: SortKey) {
+fn sort_rows(rows: &mut [Row], key: SortKey, pss: bool) {
     match key {
-        SortKey::Mem => rows.sort_by_key(|a| Reverse(a.rss)),
+        SortKey::Mem => rows.sort_by_key(|a| Reverse(mem_value(a, pss))),
         SortKey::Virt => rows.sort_by_key(|a| Reverse(a.virt)),
         SortKey::Cpu => rows.sort_by(|a, b| {
             b.cpu
@@ -172,6 +206,108 @@ fn sort_rows(rows: &mut [Row], key: SortKey) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(pid: u32, cmd: &str, rss: u64, pss: Option<u64>) -> Row {
+        Row {
+            pid,
+            user: "u".to_string(),
+            rss,
+            virt: rss * 2,
+            cpu: 0.0,
+            threads: 1,
+            cmd: cmd.to_string(),
+            args: cmd.to_string(),
+            ppid: 1,
+            start_time: 100,
+            tty_nr: 0,
+            pss,
+            uss: None,
+            swap: None,
+        }
+    }
+
+    fn test_args(pss: bool) -> Args {
+        Args {
+            count: None,
+            sort: SortKey::Mem,
+            reverse: false,
+            user: None,
+            pid: Vec::new(),
+            min_mem: None,
+            bytes: false,
+            threads: false,
+            group: false,
+            pss,
+            summary: false,
+            json: false,
+            watch: false,
+            interval: 2.0,
+            kill: false,
+        }
+    }
+
+    #[test]
+    fn aggregate_sums_rss_and_counts() {
+        let rows = vec![
+            row(1, "app", 100, None),
+            row(2, "app", 200, None),
+            row(3, "other", 50, None),
+        ];
+        let groups = aggregate(&rows, &test_args(false), None);
+        let app = groups.iter().find(|g| g.name == "app").unwrap();
+        assert_eq!(app.rss, 300);
+        assert_eq!(app.virt, 600);
+        assert_eq!(app.count, 2);
+        assert_eq!(groups[0].name, "app");
+    }
+
+    #[test]
+    fn aggregate_pss_skips_unreadable_members() {
+        // one member has PSS 80 (<= rss 100), one is unreadable
+        let rows = vec![row(1, "app", 100, Some(80)), row(2, "app", 200, None)];
+        let groups = aggregate(&rows, &test_args(true), None);
+        let app = &groups[0];
+        assert_eq!(app.pss, Some(80)); // RSS of the unreadable member must NOT be folded in
+        assert_eq!(app.unreadable, 1);
+        assert_eq!(app.count, 2);
+    }
+
+    #[test]
+    fn aggregate_group_pss_never_exceeds_group_rss() {
+        let rows = vec![
+            row(1, "app", 100, Some(80)),
+            row(2, "app", 200, Some(150)),
+            row(3, "app", 300, None),
+        ];
+        let groups = aggregate(&rows, &test_args(true), None);
+        let g = &groups[0];
+        assert!(g.pss.unwrap() <= g.rss);
+    }
+
+    #[test]
+    fn aggregate_all_unreadable_pss_is_none() {
+        let rows = vec![row(1, "app", 100, None)];
+        let groups = aggregate(&rows, &test_args(true), None);
+        assert_eq!(groups[0].pss, None);
+        assert_eq!(groups[0].unreadable, 1);
+    }
+
+    #[test]
+    fn min_mem_filters_on_pss_when_pss_mode() {
+        let args = test_args(true);
+        let rows = vec![row(1, "a", 1000, Some(10)), row(2, "b", 100, Some(900))];
+        let out = build_rows(rows, &args, Some(500));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].cmd, "b");
+    }
+
+    #[test]
+    fn sort_mem_uses_pss_when_pss_mode() {
+        let args = test_args(true);
+        let rows = vec![row(1, "a", 1000, Some(10)), row(2, "b", 100, Some(900))];
+        let out = build_rows(rows, &args, None);
+        assert_eq!(out[0].cmd, "b");
+    }
 
     #[test]
     fn command_key_simple() {

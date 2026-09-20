@@ -61,6 +61,7 @@ memtop -k              # interactive kill mode (arrow keys + Enter)
 | `-p, --pid <PID>` | Only show these PIDs (comma-separated, repeatable) |
 | `-m, --min-mem <SIZE>` | Only show entries using at least this much (`512M`, `1G`) |
 | `-g, --group` | Group processes by application |
+| `--pss` | Show PSS/USS/swap (shared pages counted once) instead of RSS; slower, reads `smaps_rollup` |
 | `-S, --summary` | Print only the memory summary |
 | `-j, --json` | Output JSON |
 | `-w, --watch` | Live-updating mode |
@@ -94,10 +95,23 @@ memtop -k              # interactive kill mode (arrow keys + Enter)
 ```bash
 memtop -S                 # how much RAM is free right now
 memtop -g -c 10           # what's eating my RAM
+memtop -g --pss           # grouped totals with shared pages counted once
 memtop -m 500M            # only processes using at least 500 MiB
 memtop -u alice -j        # alice's processes as JSON
 memtop -k                 # find the hog and kill it
 ```
+
+### Notes on `--pss`
+
+RSS double-counts memory shared between processes, so grouped RSS totals are
+inflated. PSS (proportional set size) counts each shared page once, spread
+across the processes sharing it — `memtop -g --pss` gives an honest total.
+
+`--pss` reads `/proc/<pid>/smaps_rollup`, which the kernel walks page tables
+for: a full scan takes a few seconds on a busy desktop versus ~0.3 s for the
+default scan. Processes owned by other users hide their `smaps_rollup`
+without root; their PSS shows as `-` and they are excluded from PSS sums
+(marked with `~` in grouped view), never silently counted as 0.
 
 ## License
 

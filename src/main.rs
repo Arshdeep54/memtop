@@ -60,10 +60,19 @@ fn main() {
 
     let rows = collect_processes(&args);
 
+    if args.pss {
+        let unreadable = rows.iter().filter(|r| r.pss.is_none()).count();
+        if unreadable > 0 {
+            eprintln!(
+                "note: PSS unavailable for {unreadable} processes, run as root for full data"
+            );
+        }
+    }
+
     if args.group {
         let groups = aggregate(&rows, &args, min_mem);
         if args.json {
-            print!("{}", render_groups_json(&groups, mem.total));
+            print!("{}", render_groups_json(&groups, &args, mem.total));
         } else {
             print!("{}", render_system_summary(&mem, &args));
             print!("{}", render_groups(&groups, &args, mem.total));
@@ -71,7 +80,7 @@ fn main() {
     } else {
         let rows = build_rows(rows, &args, min_mem);
         if args.json {
-            print!("{}", render_json(&rows));
+            print!("{}", render_json(&rows, &args));
         } else {
             print!("{}", render_table(&rows, &args));
         }

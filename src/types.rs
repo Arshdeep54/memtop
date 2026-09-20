@@ -16,6 +16,12 @@ pub(crate) struct Row {
     /// controlling terminal device number, 0 when none (stat field 7)
     #[allow(dead_code)] // consumed by --orphans in a later phase
     pub(crate) tty_nr: u64,
+    /// proportional set size, only read when --pss is set
+    pub(crate) pss: Option<u64>,
+    /// unique set size (private clean + dirty), only read when --pss is set
+    pub(crate) uss: Option<u64>,
+    /// swap-backed memory, only read when --pss is set
+    pub(crate) swap: Option<u64>,
 }
 
 pub(crate) struct Group {
@@ -23,6 +29,10 @@ pub(crate) struct Group {
     pub(crate) rss: u64,
     pub(crate) virt: u64,
     pub(crate) count: usize,
+    /// sum of member PSS (members with unreadable PSS excluded), None = all unreadable
+    pub(crate) pss: Option<u64>,
+    /// members whose PSS could not be read
+    pub(crate) unreadable: usize,
 }
 
 pub(crate) struct MemInfo {

@@ -57,6 +57,11 @@ pub(crate) struct Args {
     #[arg(short, long, default_value_t = 2.0)]
     pub(crate) interval: f64,
 
+    /// Show PSS/USS/swap instead of RSS: reads /proc/<pid>/smaps_rollup,
+    /// which the kernel walks page tables for (slower than status).
+    #[arg(long)]
+    pub(crate) pss: bool,
+
     /// Interactively select and kill a process.
     #[arg(short = 'k', long)]
     pub(crate) kill: bool,
