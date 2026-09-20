@@ -161,3 +161,41 @@ fn sort_rows(rows: &mut [Row], key: SortKey) {
         SortKey::Name => rows.sort_by(|a, b| a.cmd.cmp(&b.cmd)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_key_simple() {
+        assert_eq!(command_key("firefox"), "firefox");
+        assert_eq!(command_key("/usr/bin/firefox"), "firefox");
+    }
+
+    #[test]
+    fn command_key_interpreter_keeps_args() {
+        // interpreters keep up to 2 non-flag args
+        assert_eq!(command_key("node server.js --port 3000"), "node server.js 3000");
+        assert_eq!(
+            command_key("/usr/bin/python3 -u script.py extra"),
+            "python3 script.py extra"
+        );
+    }
+
+    #[test]
+    fn command_key_interpreter_skips_flags() {
+        assert_eq!(command_key("node --max-old-space-size=4096 app.js"), "node app.js");
+        assert_eq!(command_key("python3 -u -B main.py"), "python3 main.py");
+    }
+
+    #[test]
+    fn command_key_non_interpreter_ignores_args() {
+        assert_eq!(command_key("chrome --flag value"), "chrome");
+    }
+
+    #[test]
+    fn command_key_empty() {
+        assert_eq!(command_key(""), "(unknown)");
+        assert_eq!(command_key("   "), "(unknown)");
+    }
+}

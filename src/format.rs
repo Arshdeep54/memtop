@@ -70,3 +70,74 @@ pub(crate) fn truncate(s: &str, max: usize) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_size_units() {
+        assert_eq!(parse_size("512"), Ok(512));
+        assert_eq!(parse_size("512B"), Ok(512));
+        assert_eq!(parse_size("1K"), Ok(1024));
+        assert_eq!(parse_size("1KB"), Ok(1024));
+        assert_eq!(parse_size("1KiB"), Ok(1024));
+        assert_eq!(parse_size("512M"), Ok(512 * 1024 * 1024));
+        assert_eq!(parse_size("1G"), Ok(1024 * 1024 * 1024));
+        assert_eq!(parse_size("2T"), Ok(2 * 1024_u64.pow(4)));
+        assert_eq!(parse_size(" 1g "), Ok(1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn parse_size_decimals() {
+        assert_eq!(parse_size("1.5K"), Ok(1536));
+        assert_eq!(parse_size("0.5M"), Ok(512 * 1024));
+    }
+
+    #[test]
+    fn parse_size_errors() {
+        assert!(parse_size("").is_err());
+        assert!(parse_size("   ").is_err());
+        assert!(parse_size("-5M").is_err());
+        assert!(parse_size("12Z").is_err());
+        assert!(parse_size("abc").is_err());
+    }
+
+    #[test]
+    fn format_bytes_units() {
+        assert_eq!(format_bytes(0, false), "0 B");
+        assert_eq!(format_bytes(512, false), "512 B");
+        assert_eq!(format_bytes(1024, false), "1.0 KiB");
+        assert_eq!(format_bytes(1536, false), "1.5 KiB");
+        assert_eq!(format_bytes(1024 * 1024, false), "1.0 MiB");
+        assert_eq!(format_bytes(3 * 1024_u64.pow(3), false), "3.0 GiB");
+        // unit ladder stops at TiB
+        assert_eq!(format_bytes(1024_u64.pow(5), false), "1024.0 TiB");
+    }
+
+    #[test]
+    fn format_bytes_raw() {
+        assert_eq!(format_bytes(2048, true), "2048");
+    }
+
+    #[test]
+    fn truncate_limits() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello", 5), "hello");
+        assert_eq!(truncate("hello", 3), "he…");
+        assert_eq!(truncate("hello", 0), "");
+        assert_eq!(truncate("hello", 1), "…");
+    }
+
+    #[test]
+    fn truncate_multibyte() {
+        assert_eq!(truncate("héllo", 4), "hél…");
+        assert_eq!(truncate("日本語です", 3), "日本…");
+    }
+
+    #[test]
+    fn pct_of_basic() {
+        assert_eq!(pct_of(50, 200), 25.0);
+        assert_eq!(pct_of(1, 0), 0.0);
+    }
+}
