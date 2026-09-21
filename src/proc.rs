@@ -1,8 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::cli::{Args, SortKey};
+use crate::cli::{Args, GroupBy, SortKey};
 use crate::net;
 use crate::procfs;
 use crate::types::{Group, Row};
@@ -138,10 +138,16 @@ pub(crate) fn build_rows(mut rows: Vec<Row>, args: &Args, min_mem: Option<u64>) 
 }
 
 pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<Group> {
+    let root = Path::new("/proc");
     let mut map: HashMap<String, Group> = HashMap::new();
     for r in rows {
-        let entry = map.entry(r.cmd.clone()).or_insert_with(|| Group {
-            name: r.cmd.clone(),
+        let key = match args.group_by {
+            GroupBy::Cmd => r.cmd.clone(),
+            GroupBy::Project => project_key(root, r.pid),
+            GroupBy::Cgroup => cgroup_key(root, r.pid),
+        };
+        let entry = map.entry(key.clone()).or_insert_with(|| Group {
+            name: key,
             rss: 0,
             virt: 0,
             count: 0,
@@ -188,6 +194,111 @@ pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<
     groups
 }
 
+/// Grouping key by project: the nearest ancestor of the cwd containing
+/// `.git` (else the cwd itself), `~`-shortened. Unreadable cwd →
+/// `(unknown)`; a cwd of `/` is `(system)`, not a giant fake project.
+fn project_key(root: &Path, pid: u32) -> String {
+    let Some(cwd) = procfs::read_cwd(root, pid) else {
+        return "(unknown)".to_string();
+    };
+    if cwd == Path::new("/") {
+        return "(system)".to_string();
+    }
+    let dir = find_git_root(&cwd).unwrap_or(cwd);
+    shorten_home(&dir)
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
+    loop {
+        if cur.join(".git").exists() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+fn shorten_home(p: &Path) -> String {
+    if let Ok(home) = std::env::var("HOME")
+        && let Ok(rest) = p.strip_prefix(home)
+    {
+        let rest = rest.to_string_lossy();
+        if rest.is_empty() {
+            return "~".to_string();
+        }
+        return format!("~/{rest}");
+    }
+    p.to_string_lossy().into_owned()
+}
+
+/// Grouping key by container/unit from the cgroup v2 path: the last
+/// meaningful component. `docker-<id>.scope` → `docker <12-char id>`,
+/// `app-*.scope` → app name, `*.service` → unit name. No docker CLI call.
+/// cgroup v1 hosts have no `::` line and degrade to `(unknown)`.
+fn cgroup_key(root: &Path, pid: u32) -> String {
+    let Some(path) = procfs::read_cgroup(root, pid) else {
+        return "(unknown)".to_string();
+    };
+    let last = path.rsplit('/').find(|c| !c.is_empty()).unwrap_or("");
+    if last.is_empty() {
+        return "(system)".to_string();
+    }
+    if let Some(id) = last
+        .strip_prefix("docker-")
+        .and_then(|s| s.strip_suffix(".scope"))
+    {
+        let short: String = id.chars().take(12).collect();
+        return format!("docker {short}");
+    }
+    if let Some(rest) = last.strip_prefix("app-") {
+        let inner = rest
+            .strip_suffix(".scope")
+            .or_else(|| rest.strip_suffix(".service"))
+            .unwrap_or(rest);
+        let inner = inner.split('@').next().unwrap_or(inner);
+        // systemd app scopes end with a random 32-hex id after a '-'
+        let bytes = inner.as_bytes();
+        if inner.len() > 33
+            && bytes[inner.len() - 33] == b'-'
+            && inner[inner.len() - 32..].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            let inner = &inner[..inner.len() - 33];
+            return unescape_cgroup(inner);
+        }
+        return unescape_cgroup(inner);
+    }
+    if let Some(unit) = last.strip_suffix(".service") {
+        return unescape_cgroup(unit);
+    }
+    unescape_cgroup(last)
+}
+
+/// The kernel escapes `\`, space, tab and newline in cgroup names as
+/// `\xHH`; undo it for display (`zen\x2dbrowser` → `zen-browser`).
+fn unescape_cgroup(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 4 <= bytes.len()
+            && bytes[i + 1] == b'x'
+            && let Ok(v) = u8::from_str_radix(&s[i + 2..i + 4], 16)
+        {
+            out.push(v as char);
+            i += 4;
+            continue;
+        }
+        let rest = &s[i..];
+        let c = rest.chars().next().unwrap();
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
+}
+
 fn command_key(args: &str) -> String {
     let argv: Vec<&str> = args.split_whitespace().collect();
     if argv.is_empty() {
@@ -232,6 +343,7 @@ fn sort_rows(rows: &mut [Row], key: SortKey, pss: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn row(pid: u32, cmd: &str, rss: u64, pss: Option<u64>) -> Row {
         Row {
@@ -264,6 +376,7 @@ mod tests {
             bytes: false,
             threads: false,
             group: false,
+            group_by: GroupBy::Cmd,
             pss,
             track: None,
             summary: false,
@@ -338,6 +451,54 @@ mod tests {
         let rows = vec![row(1, "a", 1000, Some(10)), row(2, "b", 100, Some(900))];
         let out = build_rows(rows, &args, None);
         assert_eq!(out[0].cmd, "b");
+    }
+
+    #[test]
+    fn find_git_root_walks_up() {
+        let base = std::env::temp_dir().join(format!("memtop-proj-{}", std::process::id()));
+        let deep = base.join("a/b/c");
+        fs::create_dir_all(&deep).unwrap();
+        fs::create_dir_all(base.join("a/.git")).unwrap();
+
+        assert_eq!(find_git_root(&deep), Some(base.join("a")));
+        // no .git anywhere -> None
+        let plain = std::env::temp_dir().join(format!("memtop-proj-plain-{}", std::process::id()));
+        fs::create_dir_all(plain.join("x/y")).unwrap();
+        assert_eq!(find_git_root(&plain), None);
+
+        fs::remove_dir_all(&base).ok();
+        fs::remove_dir_all(&plain).ok();
+    }
+
+    #[test]
+    fn cgroup_key_variants() {
+        let root = std::env::temp_dir().join(format!("memtop-cg-{}", std::process::id()));
+        for (pid, content) in [
+            (1u32, "0::/system.slice/docker-1a2b3c4d5e6f7a8b9c0d.scope\n".to_string()),
+            (2, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-terminal@12345.service\n".to_string()),
+            (3, "0::/\n".to_string()),
+            (4, "10:cpu:/user.slice\n".to_string()), // v1
+            (5, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-io.elementary.monitor@12345.scope\n".to_string()),
+        ] {
+            let dir = root.join(pid.to_string());
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("cgroup"), content).unwrap();
+        }
+        let k = |pid| cgroup_key(&root, pid);
+        assert_eq!(k(1), "docker 1a2b3c4d5e6f");
+        assert_eq!(k(2), "gnome-terminal");
+        assert_eq!(k(3), "(system)");
+        assert_eq!(k(4), "(unknown)"); // v1 degrades
+        assert_eq!(k(5), "io.elementary.monitor");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cgroup_unescape_names() {
+        assert_eq!(unescape_cgroup("zen\\x2dbrowser"), "zen-browser");
+        assert_eq!(unescape_cgroup("my\\x20app"), "my app");
+        assert_eq!(unescape_cgroup("plain"), "plain");
+        assert_eq!(unescape_cgroup("bad\\xzz"), "bad\\xzz"); // not hex, kept
     }
 
     #[test]

@@ -80,6 +80,9 @@ high-water mark; on Ctrl-C both memtop and the child die without a report.
 | `-p, --pid <PID>` | Only show these PIDs (comma-separated, repeatable) |
 | `-m, --min-mem <SIZE>` | Only show entries using at least this much (`512M`, `1G`) |
 | `-g, --group` | Group processes by application |
+| `--group-by <KEY>` | Group key: `cmd` (default), `project` (nearest `.git` ancestor of cwd), or `cgroup` (container/unit); implies `--group` |
+| `--port <PORT>` | Only show processes listening on this TCP port (comma-separated, repeatable) |
+| `--ports` | Show the PORTS column without filtering |
 | `--pss` | Show PSS/USS/swap (shared pages counted once) instead of RSS; slower, reads `smaps_rollup` |
 | `-S, --summary` | Print only the memory summary |
 | `-j, --json` | Output JSON |
@@ -131,6 +134,22 @@ for: a full scan takes a few seconds on a busy desktop versus ~0.3 s for the
 default scan. Processes owned by other users hide their `smaps_rollup`
 without root; their PSS shows as `-` and they are excluded from PSS sums
 (marked with `~` in grouped view), never silently counted as 0.
+
+### Ports and grouping
+
+```bash
+memtop --port 3000        # what is on :3000?
+memtop -k --port 3000     # ...and kill it through the normal kill mode
+memtop -g --group-by project   # memory per project (node + tsserver + jest ...)
+memtop -g --group-by cgroup    # memory per container / systemd unit
+```
+
+`--port` matches LISTENING TCP sockets (v4 and v6) by walking
+`/proc/net/tcp*` and each process's open fds; processes of other users hide
+their fds without root, so their ports show as `-`. `--group-by project`
+walks up from each process's cwd to the nearest `.git`; `--group-by cgroup`
+reads `/proc/<pid>/cgroup` (cgroup v2; v1 hosts degrade to `(unknown)`,
+docker containers show a short id).
 
 ## License
 

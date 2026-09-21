@@ -47,6 +47,10 @@ pub(crate) struct Args {
     #[arg(short, long)]
     pub(crate) group: bool,
 
+    /// Grouping key for grouped view (implies --group).
+    #[arg(long, value_enum, default_value_t = GroupBy::Cmd)]
+    pub(crate) group_by: GroupBy,
+
     /// Print only the system memory summary.
     #[arg(short = 'S', long)]
     pub(crate) summary: bool,
@@ -106,6 +110,13 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true)]
         cmd: Vec<String>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum GroupBy {
+    Cmd,
+    Project,
+    Cgroup,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

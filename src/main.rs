@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
-use cli::Args;
+use cli::{Args, GroupBy};
 use format::{parse_duration, parse_size};
 use kill::interactive_kill;
 use mem::read_meminfo;
@@ -67,7 +67,9 @@ fn main() {
         eprintln!("error: --watch and --json cannot be combined");
         exit(2);
     }
-    if args.watch && args.group {
+    let grouped = args.group || !matches!(args.group_by, GroupBy::Cmd);
+
+    if args.watch && grouped {
         eprintln!("error: --watch and --group cannot be combined");
         exit(2);
     }
@@ -107,7 +109,7 @@ fn main() {
         }
     }
 
-    if args.group {
+    if grouped {
         let groups = aggregate(&rows, &args, min_mem);
         if args.json {
             print!("{}", render_groups_json(&groups, &args, mem.total));

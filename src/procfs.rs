@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct StatInfo {
     #[allow(dead_code)]
@@ -200,6 +200,28 @@ pub(crate) fn parse_smaps_rollup(s: &str) -> Option<SmapsRollup> {
     Some(out)
 }
 
+/// Target of `/proc/<pid>/cwd`.
+pub(crate) fn read_cwd(root: &Path, pid: u32) -> Option<PathBuf> {
+    fs::read_link(root.join(pid.to_string()).join("cwd")).ok()
+}
+
+/// `/proc/<pid>/cgroup`: v2 line is `0::<path>`; v1 (no `::`) means callers
+/// degrade gracefully rather than mis-parse.
+pub(crate) fn read_cgroup(root: &Path, pid: u32) -> Option<String> {
+    let path = root.join(pid.to_string()).join("cgroup");
+    let text = fs::read_to_string(path).ok()?;
+    parse_cgroup(&text)
+}
+
+pub(crate) fn parse_cgroup(s: &str) -> Option<String> {
+    for line in s.lines() {
+        if let Some(path) = line.split_once("::").map(|(_, p)| p.trim()) {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +367,30 @@ mod tests {
     fn read_smaps_rollup_missing_file_is_none() {
         let root = fixture_root("smaps-missing");
         assert!(read_smaps_rollup(&root, 1).is_none());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn parse_cgroup_v2_and_v1() {
+        assert_eq!(
+            parse_cgroup("0::/system.slice/docker-abc.scope\n"),
+            Some("/system.slice/docker-abc.scope".to_string())
+        );
+        // cgroup v1 has no "::" line
+        assert_eq!(parse_cgroup("10:cpu:/user.slice\n2:memory:/\n"), None);
+        assert_eq!(parse_cgroup(""), None);
+    }
+
+    #[test]
+    fn read_cwd_fixture() {
+        let root = fixture_root("cwd");
+        fs::create_dir_all(root.join("42")).unwrap();
+        let target = root.join("home/proj");
+        fs::create_dir_all(&target).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, root.join("42/cwd")).unwrap();
+        assert_eq!(read_cwd(&root, 42), Some(target));
+        assert_eq!(read_cwd(&root, 43), None);
         fs::remove_dir_all(&root).ok();
     }
 }
