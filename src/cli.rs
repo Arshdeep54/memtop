@@ -81,6 +81,11 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) ports: bool,
 
+    /// Render the flat list as an indented process tree with subtree
+    /// memory totals (implies no --sort/--json).
+    #[arg(long)]
+    pub(crate) tree: bool,
+
     /// Track memory growth for this duration (e.g. 30s, 5m) and rank by
     /// growth rate instead of current size.
     #[arg(long, value_name = "DURATION")]

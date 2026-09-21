@@ -386,6 +386,7 @@ mod tests {
             kill: false,
             port: Vec::new(),
             ports: false,
+            tree: false,
             command: None,
         }
     }

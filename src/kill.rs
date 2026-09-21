@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::{exit, Command};
 
 use crossterm::{
@@ -11,6 +13,7 @@ use crossterm::{
 use crate::cli::Args;
 use crate::format::{format_bytes, truncate};
 use crate::proc::{build_rows, collect_processes};
+use crate::procfs;
 use crate::types::Row;
 
 pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
@@ -23,13 +26,22 @@ pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
     let mut selected: usize = 0;
     let mut start: usize = 0;
     let mut status: Option<String> = None;
+    let mut tree_scope = false;
     let mut stdout = io::stdout();
 
     loop {
         let (term_w, term_h) = terminal::size().unwrap_or((80, 24));
         let visible = (term_h as usize).saturating_sub(7).max(1);
 
-        render_kill_screen(&mut stdout, &rows, selected, start, status.as_deref(), term_w, visible);
+        let view = KillView {
+            rows: &rows,
+            selected,
+            start,
+            tree_scope,
+            term_w,
+            visible,
+        };
+        render_kill_screen(&mut stdout, &view, status.as_deref());
         status = None;
 
         let Ok(Event::Key(key)) = event::read() else {
@@ -79,10 +91,27 @@ pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(row) = rows.get(selected) {
-                    let pid = row.pid;
-                    let name = row.cmd.clone();
-                    match kill_process(pid, "TERM") {
-                        Ok(()) => status = Some(format!("killed {pid} ({name})")),
+                    let targets = if tree_scope {
+                        let t = tree_targets(&rows, selected);
+                        let view = KillView {
+                            rows: &rows,
+                            selected,
+                            start,
+                            tree_scope,
+                            term_w,
+                            visible,
+                        };
+                        if !confirm_tree_kill(&mut stdout, &view, t.len()) {
+                            status = Some("tree kill cancelled".to_string());
+                            continue;
+                        }
+                        t
+                    } else {
+                        vec![(row.pid, row.start_time)]
+                    };
+                    let sig = "TERM";
+                    match kill_pids(&targets, sig) {
+                        Ok(msg) => status = Some(msg),
                         Err(e) => status = Some(e),
                     }
                     rows = refresh_rows(args, min_mem);
@@ -91,15 +120,34 @@ pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
             }
             KeyCode::Char('x') | KeyCode::Delete => {
                 if let Some(row) = rows.get(selected) {
-                    let pid = row.pid;
-                    let name = row.cmd.clone();
-                    match kill_process(pid, "KILL") {
-                        Ok(()) => status = Some(format!("killed {pid} ({name}) with SIGKILL")),
+                    let targets = if tree_scope {
+                        let t = tree_targets(&rows, selected);
+                        let view = KillView {
+                            rows: &rows,
+                            selected,
+                            start,
+                            tree_scope,
+                            term_w,
+                            visible,
+                        };
+                        if !confirm_tree_kill(&mut stdout, &view, t.len()) {
+                            status = Some("tree kill cancelled".to_string());
+                            continue;
+                        }
+                        t
+                    } else {
+                        vec![(row.pid, row.start_time)]
+                    };
+                    match kill_pids(&targets, "KILL") {
+                        Ok(msg) => status = Some(msg),
                         Err(e) => status = Some(e),
                     }
                     rows = refresh_rows(args, min_mem);
                     clamp_view(rows.len(), &mut selected, &mut start, visible);
                 }
+            }
+            KeyCode::Char('t') => {
+                tree_scope = !tree_scope;
             }
             KeyCode::Char('r') => {
                 rows = refresh_rows(args, min_mem);
@@ -118,6 +166,59 @@ fn refresh_rows(args: &Args, min_mem: Option<u64>) -> Vec<Row> {
     build_rows(collect_processes(args), args, min_mem)
 }
 
+/// The selected process and all its visible descendants, ordered leaves
+/// first and parent last, so a parent cannot respawn a child mid-way.
+fn tree_targets(rows: &[Row], root_idx: usize) -> Vec<(u32, u64)> {
+    let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, r) in rows.iter().enumerate() {
+        if i != root_idx {
+            children.entry(r.ppid).or_default().push(i);
+        }
+    }
+
+    let mut order = Vec::new();
+    let mut stack = vec![root_idx];
+    while let Some(i) = stack.pop() {
+        order.push(i);
+        if let Some(kids) = children.get(&rows[i].pid) {
+            for &kid in kids {
+                stack.push(kid);
+            }
+        }
+    }
+    // reverse of a preorder is parents-last
+    order.reverse();
+    order
+        .into_iter()
+        .map(|i| (rows[i].pid, rows[i].start_time))
+        .collect()
+}
+
+/// Everything the kill screen needs to redraw itself.
+struct KillView<'a> {
+    rows: &'a [Row],
+    selected: usize,
+    start: usize,
+    tree_scope: bool,
+    term_w: u16,
+    visible: usize,
+}
+
+/// Extra confirm step for tree kills only — the blast radius is larger.
+fn confirm_tree_kill(stdout: &mut io::Stdout, view: &KillView, count: usize) -> bool {
+    render_kill_screen(
+        stdout,
+        view,
+        Some(&format!(
+            "tree kill of {count} processes (SIGTERM/SIGKILL): confirm? y/n"
+        )),
+    );
+    matches!(
+        event::read(),
+        Ok(Event::Key(k)) if k.code == KeyCode::Char('y')
+    )
+}
+
 fn clamp_view(rows_len: usize, selected: &mut usize, start: &mut usize, visible: usize) {
     *selected = (*selected).min(rows_len.saturating_sub(1));
     *start = (*start).min(rows_len.saturating_sub(1));
@@ -129,15 +230,16 @@ fn clamp_view(rows_len: usize, selected: &mut usize, start: &mut usize, visible:
     }
 }
 
-fn render_kill_screen(
-    stdout: &mut io::Stdout,
-    rows: &[Row],
-    selected: usize,
-    start: usize,
-    status: Option<&str>,
-    term_w: u16,
-    visible: usize,
-) {
+fn render_kill_screen(stdout: &mut io::Stdout, view: &KillView, status: Option<&str>) {
+    // KillView is all-Copy, so destructure into plain values
+    let KillView {
+        rows,
+        selected,
+        start,
+        tree_scope,
+        term_w,
+        visible,
+    } = *view;
     let _ = execute!(stdout, Clear(ClearType::All), MoveTo(0, 0));
 
     let w = term_w as usize;
@@ -158,8 +260,9 @@ fn render_kill_screen(
 
     let mut out = String::with_capacity(w * (visible + 6));
 
+    let scope = if tree_scope { "  [tree]" } else { "" };
     out.push_str(&format!(
-        "\x1b[1mmemtop — kill mode\x1b[0m   {} processes\n",
+        "\x1b[1mmemtop — kill mode\x1b[0m{scope}   {} processes\n",
         rows.len(),
     ));
     out.push_str(&format!(
@@ -202,7 +305,9 @@ fn render_kill_screen(
     } else {
         out.push_str("\n  (no processes)\n");
     }
-    out.push_str("  ↑/↓ move   Enter kill (TERM)   x force (KILL)   r refresh   q quit");
+    out.push_str(
+        "  ↑/↓ move   Enter kill (TERM)   x force (KILL)   t tree scope   r refresh   q quit",
+    );
 
     if let Some(s) = status {
         out.push_str(&format!("\n  {s}"));
@@ -212,16 +317,39 @@ fn render_kill_screen(
     let _ = stdout.flush();
 }
 
-fn kill_process(pid: u32, signal: &str) -> Result<(), String> {
+/// Signal a set of (pid, start_time) targets with one `kill` call. Each
+/// target's start_time is re-read immediately before signalling; a changed
+/// start_time means the pid was reused and is skipped.
+fn kill_pids(targets: &[(u32, u64)], signal: &str) -> Result<String, String> {
     let sig = signal.trim().to_ascii_uppercase();
-    let sig = sig.strip_prefix("SIG").unwrap_or(&sig);
+    let sig = sig.strip_prefix("SIG").unwrap_or(&sig).to_string();
+
+    let root = Path::new("/proc");
+    let mut live: Vec<String> = Vec::new();
+    let mut reused = 0;
+    for (pid, start_time) in targets {
+        match procfs::read_start_time(root, *pid) {
+            Some(t) if t == *start_time => live.push(pid.to_string()),
+            _ => reused += 1,
+        }
+    }
+
+    if live.is_empty() {
+        return Err("no targets left: pids exited or were reused".to_string());
+    }
 
     let output = Command::new("kill")
-        .args([format!("-{sig}"), pid.to_string()])
+        .arg(format!("-{sig}"))
+        .args(&live)
         .output();
 
+    let base = format!("signalled {} pid(s) with SIG{sig}", live.len());
     match output {
-        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) if o.status.success() => Ok(if reused > 0 {
+            format!("{base} ({reused} skipped: pid reused or gone)")
+        } else {
+            base
+        }),
         Ok(o) => {
             let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
             if msg.is_empty() {
@@ -231,5 +359,68 @@ fn kill_process(pid: u32, signal: &str) -> Result<(), String> {
             }
         }
         Err(e) => Err(format!("failed to run `kill`: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(pid: u32, ppid: u32) -> Row {
+        Row {
+            pid,
+            user: "u".to_string(),
+            rss: 0,
+            virt: 0,
+            cpu: 0.0,
+            threads: 1,
+            cmd: format!("p{pid}"),
+            args: format!("p{pid}"),
+            ppid,
+            start_time: 100,
+            tty_nr: 0,
+            pss: None,
+            uss: None,
+            swap: None,
+            ports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn tree_targets_parent_last() {
+        // rows: p1 root (idx 0) with children p2, p3; p2 has child p4
+        let rows = vec![row(1, 0), row(2, 1), row(3, 1), row(4, 2)];
+        let targets = tree_targets(&rows, 0);
+        let pids: Vec<u32> = targets.iter().map(|(p, _)| *p).collect();
+        assert_eq!(pids.len(), 4);
+        // parent must come last so it cannot respawn children mid-way
+        assert_eq!(*pids.last().unwrap(), 1);
+        assert!(pids.contains(&2) && pids.contains(&3) && pids.contains(&4));
+    }
+
+    #[test]
+    fn tree_targets_single() {
+        let rows = vec![row(1, 0)];
+        let targets = tree_targets(&rows, 0);
+        assert_eq!(targets, vec![(1, 100)]);
+    }
+
+    #[test]
+    fn kill_pids_skips_stale_start_times() {
+        // a target whose start_time no longer matches /proc is treated as
+        // reused and skipped; with no live targets left, this is an error
+        let own_pid = std::process::id();
+        let stale = vec![(own_pid, 12345_u64)];
+        let err = kill_pids(&stale, "TERM").unwrap_err();
+        assert!(err.contains("reused"), "got: {err}");
+    }
+
+    #[test]
+    fn kill_pids_reports_already_exited() {
+        // pid 4 (safely out of use almost everywhere) with any start_time:
+        // the guard finds nothing live and reports instead of crashing
+        let stale = vec![(4_u32, 1_u64)];
+        let err = kill_pids(&stale, "KILL").unwrap_err();
+        assert!(err.contains("no targets"), "got: {err}");
     }
 }

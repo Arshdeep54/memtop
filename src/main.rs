@@ -23,6 +23,7 @@ use mem::read_meminfo;
 use proc::{aggregate, build_rows, collect_processes};
 use render::{
     render_groups, render_groups_json, render_json, render_system_summary, render_table,
+    render_tree,
 };
 
 fn main() {
@@ -68,6 +69,11 @@ fn main() {
         exit(2);
     }
     let grouped = args.group || !matches!(args.group_by, GroupBy::Cmd);
+
+    if args.tree && (args.json || grouped || args.watch) {
+        eprintln!("error: --tree cannot be combined with --json, --group, or --watch");
+        exit(2);
+    }
 
     if args.watch && grouped {
         eprintln!("error: --watch and --group cannot be combined");
@@ -118,6 +124,16 @@ fn main() {
             print!("{}", render_groups(&groups, &args, mem.total));
         }
     } else {
+        if args.tree {
+            // --sort/--count semantics change: tree orders by subtree total,
+            // --count applies to top-level roots, so filter but don't sort
+            let mut rows = rows;
+            if let Some(min) = min_mem {
+                rows.retain(|r| r.rss >= min);
+            }
+            print!("{}", render_tree(&rows, &args));
+            return;
+        }
         let rows = build_rows(rows, &args, min_mem);
         if args.json {
             print!("{}", render_json(&rows, &args));

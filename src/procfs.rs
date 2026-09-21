@@ -222,6 +222,12 @@ pub(crate) fn parse_cgroup(s: &str) -> Option<String> {
     None
 }
 
+/// `starttime` (clock ticks since boot) of a single pid, used to detect PID
+/// reuse before signalling.
+pub(crate) fn read_start_time(root: &Path, pid: u32) -> Option<u64> {
+    read_stat(root, pid).map(|s| s.starttime)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
