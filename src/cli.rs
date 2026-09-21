@@ -68,6 +68,11 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) pss: bool,
 
+    /// Track memory growth for this duration (e.g. 30s, 5m) and rank by
+    /// growth rate instead of current size.
+    #[arg(long, value_name = "DURATION")]
+    pub(crate) track: Option<String>,
+
     /// Interactively select and kill a process.
     #[arg(short = 'k', long)]
     pub(crate) kill: bool,

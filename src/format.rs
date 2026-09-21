@@ -55,6 +55,35 @@ pub(crate) fn pct_of(part: u64, total: u64) -> f64 {
     }
 }
 
+/// Durations like `30s`, `5m`, `2h`, or a bare number of seconds.
+pub(crate) fn parse_duration(s: &str) -> Result<f64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("empty value".to_string());
+    }
+
+    let split_at = s
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(s.len());
+    let (num, unit) = s.split_at(split_at);
+
+    let value: f64 = num
+        .parse()
+        .map_err(|_| format!("invalid number '{num}'"))?;
+    if value < 0.0 {
+        return Err("negative values are not allowed".to_string());
+    }
+
+    let multiplier: f64 = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "s" | "sec" | "secs" | "seconds" => 1.0,
+        "m" | "min" | "mins" | "minutes" => 60.0,
+        "h" | "hr" | "hrs" | "hours" => 3600.0,
+        other => return Err(format!("unknown unit '{other}'")),
+    };
+
+    Ok(value * multiplier)
+}
+
 pub(crate) fn truncate(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max {

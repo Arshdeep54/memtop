@@ -25,13 +25,13 @@ pub(crate) fn render_system_summary(mem: &MemInfo, args: &Args) -> String {
 }
 
 /// A right- or left-aligned table column; cells must be one per row.
-struct Col {
-    header: &'static str,
-    cells: Vec<String>,
-    right: bool,
+pub(crate) struct Col {
+    pub(crate) header: &'static str,
+    pub(crate) cells: Vec<String>,
+    pub(crate) right: bool,
 }
 
-fn render_columns(cols: &[Col]) -> String {
+pub(crate) fn render_columns(cols: &[Col]) -> String {
     let widths: Vec<usize> = cols
         .iter()
         .map(|c| {

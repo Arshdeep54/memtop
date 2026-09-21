@@ -6,6 +6,7 @@ mod proc;
 mod procfs;
 mod render;
 mod run;
+mod track;
 mod types;
 
 use std::io::{self, Write};
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use cli::Args;
-use format::parse_size;
+use format::{parse_duration, parse_size};
 use kill::interactive_kill;
 use mem::read_meminfo;
 use proc::{aggregate, build_rows, collect_processes};
@@ -37,6 +38,28 @@ fn main() {
             return;
         }
         None => {}
+    }
+
+    if let Some(track_spec) = args.track.clone() {
+        if args.watch || args.kill || args.summary {
+            eprintln!("error: --track cannot be combined with --watch, --kill, or --summary");
+            exit(2);
+        }
+        let duration = match parse_duration(&track_spec) {
+            Ok(d) if d > 0.0 => d,
+            Ok(_) => {
+                eprintln!("error: --track duration must be positive");
+                exit(2);
+            }
+            Err(e) => {
+                eprintln!("error: invalid --track value '{track_spec}': {e}");
+                exit(2);
+            }
+        };
+        // growth ranking is where accurate numbers are the point
+        args.pss = true;
+        track::track(&args, duration, args.json);
+        return;
     }
 
     if args.watch && args.json {

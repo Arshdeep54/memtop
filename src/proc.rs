@@ -238,6 +238,7 @@ mod tests {
             threads: false,
             group: false,
             pss,
+            track: None,
             summary: false,
             json: false,
             watch: false,
