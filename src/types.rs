@@ -24,6 +24,9 @@ pub(crate) struct Row {
     pub(crate) swap: Option<u64>,
     /// listening TCP ports, only scanned when --port/--ports is set
     pub(crate) ports: Vec<u16>,
+    /// oom_score / oom_score_adj, only read when --oom is set
+    pub(crate) oom_score: Option<u64>,
+    pub(crate) oom_score_adj: Option<i32>,
 }
 
 pub(crate) struct Group {

@@ -383,6 +383,8 @@ mod tests {
             uss: None,
             swap: None,
             ports: Vec::new(),
+            oom_score: None,
+            oom_score_adj: None,
         }
     }
 

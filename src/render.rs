@@ -5,7 +5,14 @@ use crate::cli::Args;
 use crate::format::{format_bytes, pct_of};
 use crate::types::{Group, MemInfo, Row};
 
-pub(crate) fn render_system_summary(mem: &MemInfo, args: &Args) -> String {
+/// Extra system context for the summary view: PSI (always optional) and a
+/// swap rate sample (only when swap is in use, since it costs one second).
+pub(crate) struct SystemExtras {
+    pub(crate) pressure: Option<crate::mem::Pressure>,
+    pub(crate) swap_rate: Option<(f64, f64)>,
+}
+
+pub(crate) fn render_system_summary(mem: &MemInfo, args: &Args, extras: &SystemExtras) -> String {
     let used = mem.total.saturating_sub(mem.available);
 
     let mut out = format!(
@@ -21,6 +28,21 @@ pub(crate) fn render_system_summary(mem: &MemInfo, args: &Args) -> String {
             "Swap:  {} used / {} total\n",
             format_bytes(mem.swap_total - mem.swap_free, args.bytes),
             format_bytes(mem.swap_total, args.bytes),
+        ));
+    }
+
+    if let Some(p) = extras.pressure {
+        out.push_str(&format!(
+            "PSI:   some {:.1}/{:.1}/{:.1}   full {:.1}/{:.1}/{:.1}  (avg10/60/300 %)\n",
+            p.some[0], p.some[1], p.some[2], p.full[0], p.full[1], p.full[2],
+        ));
+    }
+
+    if let Some((in_rate, out_rate)) = extras.swap_rate {
+        out.push_str(&format!(
+            "Swap rate: {}/s in, {}/s out\n",
+            format_bytes(in_rate as u64, args.bytes),
+            format_bytes(out_rate as u64, args.bytes),
         ));
     }
 
@@ -127,6 +149,10 @@ pub(crate) fn render_json(rows: &[Row], args: &Args) -> String {
             }
             if show_ports(args) {
                 v["ports"] = serde_json::json!(r.ports);
+            }
+            if args.oom {
+                v["oom_score"] = serde_json::json!(r.oom_score);
+                v["oom_score_adj"] = serde_json::json!(r.oom_score_adj);
             }
             v
         })
@@ -288,6 +314,21 @@ pub(crate) fn render_table(rows: &[Row], args: &Args) -> String {
         cols.push(Col {
             header: "THR",
             cells: rows.iter().map(|r| r.threads.to_string()).collect(),
+            right: true,
+        });
+    }
+
+    if args.oom {
+        cols.push(Col {
+            header: "OOM",
+            cells: rows
+                .iter()
+                .map(|r| match (r.oom_score, r.oom_score_adj) {
+                    (Some(s), Some(a)) => format!("{s}({a})"),
+                    (Some(s), None) => s.to_string(),
+                    _ => "-".to_string(),
+                })
+                .collect(),
             right: true,
         });
     }
@@ -472,6 +513,8 @@ mod tests {
             uss: None,
             swap: None,
             ports: Vec::new(),
+            oom_score: None,
+            oom_score_adj: None,
         }
     }
 
@@ -490,6 +533,10 @@ mod tests {
             port: Vec::new(),
             ports: false,
             tree: true,
+            orphans: false,
+            min_age: "10m".to_string(),
+            oom: false,
+            oom_log: false,
             pss: false,
             track: None,
             summary: false,

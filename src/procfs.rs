@@ -228,6 +228,18 @@ pub(crate) fn read_start_time(root: &Path, pid: u32) -> Option<u64> {
     read_stat(root, pid).map(|s| s.starttime)
 }
 
+/// `oom_score` and `oom_score_adj` from `/proc/<pid>/`.
+pub(crate) fn read_oom(root: &Path, pid: u32) -> (Option<u64>, Option<i32>) {
+    let dir = root.join(pid.to_string());
+    let score = fs::read_to_string(dir.join("oom_score"))
+        .ok()
+        .and_then(|t| t.trim().parse().ok());
+    let adj = fs::read_to_string(dir.join("oom_score_adj"))
+        .ok()
+        .and_then(|t| t.trim().parse().ok());
+    (score, adj)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

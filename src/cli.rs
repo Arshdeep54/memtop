@@ -95,6 +95,14 @@ pub(crate) struct Args {
     #[arg(long, value_name = "DURATION", default_value = "10m")]
     pub(crate) min_age: String,
 
+    /// Include oom_score/oom_score_adj columns (who dies first).
+    #[arg(long)]
+    pub(crate) oom: bool,
+
+    /// Print kernel-log OOM kills (journalctl -k, fallback dmesg).
+    #[arg(long)]
+    pub(crate) oom_log: bool,
+
     /// Track memory growth for this duration (e.g. 30s, 5m) and rank by
     /// growth rate instead of current size.
     #[arg(long, value_name = "DURATION")]

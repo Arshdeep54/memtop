@@ -11,19 +11,20 @@ mod track;
 mod types;
 
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::exit;
 use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
 use cli::{Args, GroupBy};
-use format::{parse_duration, parse_size};
+use format::{format_bytes, parse_duration, parse_size};
 use kill::interactive_kill;
 use mem::read_meminfo;
 use proc::{aggregate, build_rows, collect_processes};
 use render::{
-    render_groups, render_groups_json, render_json, render_system_summary, render_table,
-    render_tree,
+    render_columns, render_groups, render_groups_json, render_json, render_system_summary,
+    render_table, render_tree, Col, SystemExtras,
 };
 
 fn main() {
@@ -40,6 +41,49 @@ fn main() {
             return;
         }
         None => {}
+    }
+
+    if args.oom_log {
+        match mem::oom_log() {
+            Ok(events) if events.is_empty() => println!("no OOM kills found"),
+            Ok(events) => {
+                let cols = vec![
+                    Col {
+                        header: "TIME",
+                        cells: events.iter().map(|e| e.time.clone()).collect(),
+                        right: false,
+                    },
+                    Col {
+                        header: "PID",
+                        cells: events.iter().map(|e| e.pid.to_string()).collect(),
+                        right: true,
+                    },
+                    Col {
+                        header: "NAME",
+                        cells: events.iter().map(|e| e.name.clone()).collect(),
+                        right: false,
+                    },
+                    Col {
+                        header: "RSS",
+                        cells: events
+                            .iter()
+                            .map(|e| {
+                                e.rss
+                                    .map(|b| format_bytes(b, false))
+                                    .unwrap_or_else(|| "-".to_string())
+                            })
+                            .collect(),
+                        right: true,
+                    },
+                ];
+                print!("{}", render_columns(&cols));
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                exit(1);
+            }
+        }
+        return;
     }
 
     if let Some(track_spec) = args.track.clone() {
@@ -100,7 +144,16 @@ fn main() {
     let mem = read_meminfo();
 
     if args.summary {
-        print!("{}", render_system_summary(&mem, &args));
+        // swap rate costs a 1 s sample, so only when swap is actually in use
+        let extras = SystemExtras {
+            pressure: mem::read_pressure(Path::new("/proc")),
+            swap_rate: if mem.swap_total > mem.swap_free {
+                mem::swap_rates()
+            } else {
+                None
+            },
+        };
+        print!("{}", render_system_summary(&mem, &args, &extras));
         return;
     }
 
@@ -120,7 +173,11 @@ fn main() {
         if args.json {
             print!("{}", render_groups_json(&groups, &args, mem.total));
         } else {
-            print!("{}", render_system_summary(&mem, &args));
+            let extras = SystemExtras {
+                pressure: mem::read_pressure(Path::new("/proc")),
+                swap_rate: None,
+            };
+            print!("{}", render_system_summary(&mem, &args, &extras));
             print!("{}", render_groups(&groups, &args, mem.total));
         }
     } else {
@@ -138,6 +195,11 @@ fn main() {
         if args.json {
             print!("{}", render_json(&rows, &args));
         } else {
+            let extras = SystemExtras {
+                pressure: mem::read_pressure(Path::new("/proc")),
+                swap_rate: None,
+            };
+            print!("{}", render_system_summary(&mem, &args, &extras));
             print!("{}", render_table(&rows, &args));
         }
     }

@@ -70,6 +70,8 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
             uss: None,
             swap: None,
             ports: Vec::new(),
+            oom_score: None,
+            oom_score_adj: None,
         });
 
         // smaps_rollup walks page tables — only pay for it when asked
@@ -80,6 +82,12 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
             row.pss = rollup.pss;
             row.uss = rollup.uss;
             row.swap = rollup.swap;
+        }
+        if args.oom {
+            let (score, adj) = procfs::read_oom(root, pid);
+            let row = rows.last_mut().unwrap();
+            row.oom_score = score;
+            row.oom_score_adj = adj;
         }
     }
 
@@ -434,6 +442,8 @@ mod tests {
             uss: None,
             swap: None,
             ports: Vec::new(),
+            oom_score: None,
+            oom_score_adj: None,
         }
     }
 
@@ -459,6 +469,10 @@ mod tests {
             port: Vec::new(),
             ports: false,
             tree: false,
+            orphans: false,
+            min_age: "10m".to_string(),
+            oom: false,
+            oom_log: false,
             command: None,
         }
     }
@@ -588,7 +602,10 @@ mod tests {
         r.tty_nr = 0;
 
         // too young: probably the current session's own server
-        assert!(!is_orphan_candidate(&r, 601.0, 600.0));
+        // start_time 60000 ticks = 600 s after boot -> age 100 s at uptime 700
+        r.start_time = 60_000;
+        assert!(!is_orphan_candidate(&r, 700.0, 600.0));
+        r.start_time = 0;
         assert!(is_orphan_candidate(&r, 700.0, 600.0));
     }
 
