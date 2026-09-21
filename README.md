@@ -73,7 +73,9 @@ high-water mark; on Ctrl-C both memtop and the child die without a report.
 
 | Flag | Description |
 |------|-------------|
-| `-c, --count <N>` | Number of processes/groups to show |
+| `-c, --count <N>` | Show the first N processes/groups (alias `--list <N>`; tables default to **10**) |
+| `--all` | Show every entry instead of the default top 10 |
+| `--asc` | Sort ascending — least memory first (default is biggest-first) |
 | `-s, --sort <KEY>` | Sort by `mem`, `virt`, `cpu`, `pid`, or `name` |
 | `-r, --reverse` | Reverse the sort order |
 | `-u, --user <NAME>` | Only show processes owned by this user |
@@ -118,13 +120,18 @@ high-water mark; on Ctrl-C both memtop and the child die without a report.
 ## Examples
 
 ```bash
-memtop -S                 # how much RAM is free right now
-memtop -g -c 10           # what's eating my RAM
-memtop -g --pss           # grouped totals with shared pages counted once
-memtop -m 500M            # only processes using at least 500 MiB
-memtop -u alice -j        # alice's processes as JSON
-memtop -k                 # find the hog and kill it
+memtop                 # top 10 by memory (default)
+memtop -g              # top 10 apps by combined memory
+memtop --all           # everything
+memtop --asc           # least memory first
+memtop --list 25       # top 25
+memtop -g --pss        # grouped totals with shared pages counted once
 ```
+
+Tables default to the top 10 ordered by memory. `-j` JSON always contains
+the **complete** list unless you pass `-c/--list N` explicitly, so snapshots
+for `memtop diff` never silently lose rows. Kill mode (`-k`) also stays
+complete — it is scrollable.
 
 ### Notes on `--pss`
 

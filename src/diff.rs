@@ -164,7 +164,8 @@ fn parse_snapshot(value: &serde_json::Value) -> Option<Vec<(String, u64)>> {
 /// No `after` file: take the group snapshot live.
 fn live_groups(args: &Args) -> Vec<(String, u64)> {
     let rows = collect_processes(args);
-    aggregate(&rows, args, None)
+    // snapshots must be complete; the top-10 default is a table-UX thing
+    aggregate(&rows, args, None, crate::proc::effective_count(args, false))
         .into_iter()
         .map(|g| (g.name, g.rss))
         .collect()

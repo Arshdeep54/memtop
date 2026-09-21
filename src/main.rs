@@ -22,7 +22,7 @@ use cli::{Args, GroupBy};
 use format::{format_bytes, parse_duration, parse_size};
 use kill::interactive_kill;
 use mem::read_meminfo;
-use proc::{aggregate, build_rows, collect_processes};
+use proc::{aggregate, build_rows, collect_processes, effective_count};
 use render::{
     render_columns, render_groups, render_groups_json, render_json, render_system_summary,
     render_table, render_tree, Col, SystemExtras,
@@ -109,7 +109,8 @@ fn main() {
         };
         // growth ranking is where accurate numbers are the point
         args.pss = true;
-        track::track(&args, duration, args.json);
+        let cap = effective_count(&args, !args.json);
+        track::track(&args, duration, args.json, cap);
         return;
     }
 
@@ -174,7 +175,8 @@ fn main() {
     }
 
     if grouped {
-        let groups = aggregate(&rows, &args, min_mem);
+        let cap = effective_count(&args, !args.json);
+        let groups = aggregate(&rows, &args, min_mem, cap);
         if args.json {
             print!("{}", render_groups_json(&groups, &args, mem.total));
         } else {
@@ -188,15 +190,17 @@ fn main() {
     } else {
         if args.tree {
             // --sort/--count semantics change: tree orders by subtree total,
-            // --count applies to top-level roots, so filter but don't sort
+            // the cap applies to top-level roots, so filter but don't sort
             let mut rows = rows;
             if let Some(min) = min_mem {
                 rows.retain(|r| r.rss >= min);
             }
-            print!("{}", render_tree(&rows, &args));
+            let cap = effective_count(&args, true);
+            print!("{}", render_tree(&rows, &args, cap));
             return;
         }
-        let rows = build_rows(rows, &args, min_mem);
+        let cap = effective_count(&args, !args.json);
+        let rows = build_rows(rows, &args, min_mem, cap);
         if args.json {
             print!("{}", render_json(&rows, &args));
         } else {
@@ -212,8 +216,9 @@ fn main() {
 
 fn run_watch(args: &Args, min_mem: Option<u64>) {
     let mut stdout = io::stdout().lock();
+    let cap = effective_count(args, true);
     loop {
-        let rows = build_rows(collect_processes(args), args, min_mem);
+        let rows = build_rows(collect_processes(args), args, min_mem, cap);
         let mut out = String::new();
         out.push_str("\x1b[2J\x1b[H");
         out.push_str(&render_table(&rows, args));

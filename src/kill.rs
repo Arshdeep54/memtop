@@ -163,7 +163,14 @@ pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
 }
 
 fn refresh_rows(args: &Args, min_mem: Option<u64>) -> Vec<Row> {
-    build_rows(collect_processes(args), args, min_mem)
+    // kill mode stays complete by default: it is scrollable, and capping it
+    // would hide processes you might want to reach
+    build_rows(
+        collect_processes(args),
+        args,
+        min_mem,
+        crate::proc::effective_count(args, false),
+    )
 }
 
 /// The selected process and all its visible descendants, ordered leaves

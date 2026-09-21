@@ -10,9 +10,18 @@ use clap::{Parser, Subcommand, ValueEnum};
     args_conflicts_with_subcommands = true
 )]
 pub(crate) struct Args {
-    /// Number of processes (or groups with --group) to display.
-    #[arg(short, long)]
+    /// Show the first N processes/groups (tables default to 10; JSON and
+    /// kill mode stay complete unless this is set explicitly).
+    #[arg(short, long, alias = "list", value_name = "N")]
     pub(crate) count: Option<usize>,
+
+    /// Show every process/group instead of the default top 10.
+    #[arg(long, conflicts_with = "count")]
+    pub(crate) all: bool,
+
+    /// Sort ascending (least memory first) instead of biggest-first.
+    #[arg(long)]
+    pub(crate) asc: bool,
 
     /// Column to sort by (flat mode only).
     #[arg(short, long, value_enum, default_value_t = SortKey::Mem)]

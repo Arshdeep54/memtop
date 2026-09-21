@@ -11,7 +11,7 @@ use crate::render::{Col, render_columns};
 /// A memory series over time: (seconds since start, bytes).
 type Sample = (f64, u64);
 
-pub(crate) fn track(args: &Args, duration: f64, json: bool) {
+pub(crate) fn track(args: &Args, duration: f64, json: bool, cap: Option<usize>) {
     let interval = args.interval.max(0.1);
     let start = Instant::now();
     let expected = ((duration / interval).ceil() as usize).max(1);
@@ -86,6 +86,9 @@ pub(crate) fn track(args: &Args, duration: f64, json: bool) {
         })
         .collect();
     results.sort_by(|a, b| b.growth_mib_per_min.total_cmp(&a.growth_mib_per_min));
+    if let Some(n) = cap {
+        results.truncate(n);
+    }
 
     if json {
         let rows: Vec<serde_json::Value> = results

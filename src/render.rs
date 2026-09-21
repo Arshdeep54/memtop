@@ -354,7 +354,7 @@ pub(crate) fn render_table(rows: &[Row], args: &Args) -> String {
 /// memory and the subtree total, siblings sorted by subtree total. A parent
 /// missing from the (filtered) row set makes its child a root; cycles
 /// cannot occur in a real ppid graph but are guarded anyway.
-pub(crate) fn render_tree(rows: &[Row], args: &Args) -> String {
+pub(crate) fn render_tree(rows: &[Row], args: &Args, cap: Option<usize>) -> String {
     let (mut children, mut roots) = tree_structure(rows);
     let subtree = subtree_totals(rows, &children);
 
@@ -362,7 +362,7 @@ pub(crate) fn render_tree(rows: &[Row], args: &Args) -> String {
         kids.sort_by_key(|&i| Reverse(subtree[i]));
     }
     roots.sort_by_key(|&i| Reverse(subtree[i]));
-    if let Some(n) = args.count {
+    if let Some(n) = cap {
         roots.truncate(n);
     }
 
@@ -521,6 +521,8 @@ mod tests {
     fn tree_args() -> Args {
         Args {
             count: None,
+            all: false,
+            asc: false,
             sort: crate::cli::SortKey::Mem,
             reverse: false,
             user: None,
@@ -575,7 +577,7 @@ mod tests {
     fn render_tree_orders_siblings_by_subtree_total() {
         // two roots: p9 (subtree 800) before p1 (subtree 700)
         let rows = vec![row(1, 999, 100), row(2, 1, 200), row(3, 2, 400), row(9, 999, 800)];
-        let out = render_tree(&rows, &tree_args());
+        let out = render_tree(&rows, &tree_args(), None);
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines[1].ends_with("p9"));
         assert!(lines[2].ends_with("p1"));

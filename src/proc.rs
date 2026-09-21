@@ -199,25 +199,48 @@ pub(crate) fn mem_value(r: &Row, pss: bool) -> u64 {
     }
 }
 
-pub(crate) fn build_rows(mut rows: Vec<Row>, args: &Args, min_mem: Option<u64>) -> Vec<Row> {
+/// How many rows a view should show. Tables default to the top 10;
+/// `--all` (or a JSON/kill context) lifts the cap, `-c/--list n` sets it.
+pub(crate) fn effective_count(args: &Args, default_cap: bool) -> Option<usize> {
+    if args.all {
+        return None;
+    }
+    match args.count {
+        Some(n) => Some(n),
+        None if default_cap => Some(10),
+        None => None,
+    }
+}
+
+pub(crate) fn build_rows(
+    mut rows: Vec<Row>,
+    args: &Args,
+    min_mem: Option<u64>,
+    cap: Option<usize>,
+) -> Vec<Row> {
     if let Some(min) = min_mem {
         rows.retain(|r| mem_value(r, args.pss) >= min);
     }
 
     sort_rows(&mut rows, args.sort, args.pss);
 
-    if args.reverse {
+    if args.reverse != args.asc {
         rows.reverse();
     }
 
-    if let Some(n) = args.count {
+    if let Some(n) = cap {
         rows.truncate(n);
     }
 
     rows
 }
 
-pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<Group> {
+pub(crate) fn aggregate(
+    rows: &[Row],
+    args: &Args,
+    min_mem: Option<u64>,
+    cap: Option<usize>,
+) -> Vec<Group> {
     let root = Path::new("/proc");
     let mut map: HashMap<String, Group> = HashMap::new();
     for r in rows {
@@ -263,11 +286,11 @@ pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<
         groups.sort_by_key(|g| Reverse(g.rss));
     }
 
-    if args.reverse {
+    if args.reverse != args.asc {
         groups.reverse();
     }
 
-    if let Some(n) = args.count {
+    if let Some(n) = cap {
         groups.truncate(n);
     }
 
@@ -450,6 +473,8 @@ mod tests {
     fn test_args(pss: bool) -> Args {
         Args {
             count: None,
+            all: false,
+            asc: false,
             sort: SortKey::Mem,
             reverse: false,
             user: None,
@@ -478,13 +503,66 @@ mod tests {
     }
 
     #[test]
+    fn default_cap_is_ten_biggest_first() {
+        let args = test_args(false);
+        let rows: Vec<Row> = (0..15u32)
+            .map(|i| row(i, "p", (i as u64 + 1) * 100, None))
+            .collect();
+        let out = build_rows(rows, &args, None, effective_count(&args, true));
+        assert_eq!(out.len(), 10);
+        assert_eq!(out[0].rss, 1500);
+        assert_eq!(out[9].rss, 600);
+    }
+
+    #[test]
+    fn all_lifts_the_cap() {
+        let mut args = test_args(false);
+        args.all = true;
+        let rows: Vec<Row> = (0..15u32)
+            .map(|i| row(i, "p", (i as u64 + 1) * 100, None))
+            .collect();
+        let out = build_rows(rows, &args, None, effective_count(&args, true));
+        assert_eq!(out.len(), 15);
+    }
+
+    #[test]
+    fn asc_puts_least_memory_first() {
+        let mut args = test_args(false);
+        args.asc = true;
+        let rows: Vec<Row> = (0..5u32)
+            .map(|i| row(i, "p", (i as u64 + 1) * 100, None))
+            .collect();
+        let out = build_rows(rows, &args, None, Some(10));
+        assert_eq!(out[0].rss, 100);
+        assert_eq!(out[4].rss, 500);
+    }
+
+    #[test]
+    fn effective_count_rules() {
+        let args = test_args(false);
+        // tables default to 10, JSON/kill stay complete
+        assert_eq!(effective_count(&args, true), Some(10));
+        assert_eq!(effective_count(&args, false), None);
+        // explicit count wins in both contexts
+        let mut args = test_args(false);
+        args.count = Some(3);
+        assert_eq!(effective_count(&args, true), Some(3));
+        assert_eq!(effective_count(&args, false), Some(3));
+        // --all wins over the default (and conflicts with count at the CLI)
+        let mut args = test_args(false);
+        args.all = true;
+        assert_eq!(effective_count(&args, true), None);
+        assert_eq!(effective_count(&args, false), None);
+    }
+
+    #[test]
     fn aggregate_sums_rss_and_counts() {
         let rows = vec![
             row(1, "app", 100, None),
             row(2, "app", 200, None),
             row(3, "other", 50, None),
         ];
-        let groups = aggregate(&rows, &test_args(false), None);
+        let groups = aggregate(&rows, &test_args(false), None, None);
         let app = groups.iter().find(|g| g.name == "app").unwrap();
         assert_eq!(app.rss, 300);
         assert_eq!(app.virt, 600);
@@ -496,7 +574,7 @@ mod tests {
     fn aggregate_pss_skips_unreadable_members() {
         // one member has PSS 80 (<= rss 100), one is unreadable
         let rows = vec![row(1, "app", 100, Some(80)), row(2, "app", 200, None)];
-        let groups = aggregate(&rows, &test_args(true), None);
+        let groups = aggregate(&rows, &test_args(true), None, None);
         let app = &groups[0];
         assert_eq!(app.pss, Some(80)); // RSS of the unreadable member must NOT be folded in
         assert_eq!(app.unreadable, 1);
@@ -510,7 +588,7 @@ mod tests {
             row(2, "app", 200, Some(150)),
             row(3, "app", 300, None),
         ];
-        let groups = aggregate(&rows, &test_args(true), None);
+        let groups = aggregate(&rows, &test_args(true), None, None);
         let g = &groups[0];
         assert!(g.pss.unwrap() <= g.rss);
     }
@@ -518,7 +596,7 @@ mod tests {
     #[test]
     fn aggregate_all_unreadable_pss_is_none() {
         let rows = vec![row(1, "app", 100, None)];
-        let groups = aggregate(&rows, &test_args(true), None);
+        let groups = aggregate(&rows, &test_args(true), None, None);
         assert_eq!(groups[0].pss, None);
         assert_eq!(groups[0].unreadable, 1);
     }
@@ -527,7 +605,7 @@ mod tests {
     fn min_mem_filters_on_pss_when_pss_mode() {
         let args = test_args(true);
         let rows = vec![row(1, "a", 1000, Some(10)), row(2, "b", 100, Some(900))];
-        let out = build_rows(rows, &args, Some(500));
+        let out = build_rows(rows, &args, Some(500), None);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].cmd, "b");
     }
@@ -536,7 +614,7 @@ mod tests {
     fn sort_mem_uses_pss_when_pss_mode() {
         let args = test_args(true);
         let rows = vec![row(1, "a", 1000, Some(10)), row(2, "b", 100, Some(900))];
-        let out = build_rows(rows, &args, None);
+        let out = build_rows(rows, &args, None, None);
         assert_eq!(out[0].cmd, "b");
     }
 
