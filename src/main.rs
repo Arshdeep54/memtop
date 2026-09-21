@@ -1,4 +1,5 @@
 mod cli;
+mod diff;
 mod format;
 mod kill;
 mod mem;
@@ -38,6 +39,10 @@ fn main() {
             cmd,
         }) => {
             run::run(json, interval_ms, cmd);
+            return;
+        }
+        Some(cli::Command::Diff { before, after }) => {
+            diff::diff(before, after, &args);
             return;
         }
         None => {}

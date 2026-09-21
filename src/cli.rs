@@ -132,6 +132,16 @@ pub(crate) enum Command {
         #[arg(trailing_var_arg = true)]
         cmd: Vec<String>,
     },
+
+    /// Diff two group snapshots (`memtop -g -j` output); without a second
+    /// file, compares against a live scan
+    Diff {
+        /// Snapshot file taken before
+        before: std::path::PathBuf,
+
+        /// Snapshot file taken after (omit to scan now)
+        after: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]

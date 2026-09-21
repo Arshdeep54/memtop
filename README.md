@@ -154,6 +154,21 @@ walks up from each process's cwd to the nearest `.git`; `--group-by cgroup`
 reads `/proc/<pid>/cgroup` (cgroup v2; v1 hosts degrade to `(unknown)`,
 docker containers show a short id).
 
+### `memtop diff <before> [after]`
+
+What changed in memory between two points in time. The snapshot is just the
+`memtop -g --json` output — save it, do the thing, diff it:
+
+```bash
+memtop -g -j > before.json
+# ... launch / test / wait ...
+memtop diff before.json            # compares against a live scan
+memtop diff before.json after.json # two saved snapshots
+```
+
+Rows are sorted by absolute delta, with `new`/`gone` markers. Malformed or
+wrong-shape snapshots fail with a clear error and exit code 2.
+
 ### Orphan finder (experimental)
 
 `memtop --orphans` lists likely leftovers from a dead session: processes of
