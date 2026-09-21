@@ -83,6 +83,9 @@ high-water mark; on Ctrl-C both memtop and the child die without a report.
 | `--group-by <KEY>` | Group key: `cmd` (default), `project` (nearest `.git` ancestor of cwd), or `cgroup` (container/unit); implies `--group` |
 | `--port <PORT>` | Only show processes listening on this TCP port (comma-separated, repeatable) |
 | `--ports` | Show the PORTS column without filtering |
+| `--tree` | Indented process tree with subtree memory totals |
+| `--orphans` | EXPERIMENTAL: only likely stale dev processes (see below) |
+| `--min-age <DURATION>` | Minimum age for `--orphans` (default `10m`) |
 | `--pss` | Show PSS/USS/swap (shared pages counted once) instead of RSS; slower, reads `smaps_rollup` |
 | `-S, --summary` | Print only the memory summary |
 | `-j, --json` | Output JSON |
@@ -150,6 +153,23 @@ their fds without root, so their ports show as `-`. `--group-by project`
 walks up from each process's cwd to the nearest `.git`; `--group-by cgroup`
 reads `/proc/<pid>/cgroup` (cgroup v2; v1 hosts degrade to `(unknown)`,
 docker containers show a short id).
+
+### Orphan finder (experimental)
+
+`memtop --orphans` lists likely leftovers from a dead session: processes of
+**your user only**, reparented to PID 1 or `systemd --user`, with **no
+controlling terminal**, matching a dev-tool list (`node`, `vite`, `webpack`,
+`tsserver`, `jest`, headless Chrome, ...), and older than `--min-age`
+(default 10 minutes). It never kills anything by itself — kill through the
+normal `-k` mode. It is a heuristic: an intentionally `nohup`'d server is
+indistinguishable from a leaked one.
+
+### Trees and orphan hunts
+
+```bash
+memtop --tree             # who spawned whom, with subtree memory
+memtop --orphans          # what did my last session leave behind?
+```
 
 ## License
 

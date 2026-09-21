@@ -86,6 +86,15 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) tree: bool,
 
+    /// EXPERIMENTAL: only show likely stale dev processes (reparented,
+    /// no tty, dev-tool command, older than --min-age). Same user only.
+    #[arg(long)]
+    pub(crate) orphans: bool,
+
+    /// Minimum age for --orphans candidates (e.g. 10m, 2h; default 10m).
+    #[arg(long, value_name = "DURATION", default_value = "10m")]
+    pub(crate) min_age: String,
+
     /// Track memory growth for this duration (e.g. 30s, 5m) and rank by
     /// growth rate instead of current size.
     #[arg(long, value_name = "DURATION")]

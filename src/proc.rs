@@ -1,8 +1,10 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::exit;
 
 use crate::cli::{Args, GroupBy, SortKey};
+use crate::format::parse_duration;
 use crate::net;
 use crate::procfs;
 use crate::types::{Group, Row};
@@ -106,8 +108,78 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
         let want: HashSet<u16> = args.port.iter().copied().collect();
         rows.retain(|r| r.ports.iter().any(|p| want.contains(p)));
     }
+    if args.orphans {
+        let min_age = match parse_duration(&args.min_age) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error: invalid --min-age value '{}': {e}", args.min_age);
+                exit(2);
+            }
+        };
+        // same user only: never suggest killing other people's processes
+        let root = Path::new("/proc");
+        let self_uid = procfs::read_status(root, std::process::id()).map(|s| s.uid);
+        let self_name = self_uid.and_then(|uid| uid_map.get(&uid).cloned());
+        rows.retain(|r| {
+            Some(&r.user) == self_name.as_ref()
+                && is_orphan_candidate(r, uptime, min_age)
+                && parent_is_init_or_user_systemd(root, r.ppid)
+        });
+    }
 
     rows
+}
+
+/// Dev tools that tend to leak when a session dies. A dev-server base name
+/// matches directly; `chrome` only counts with `--headless` (a real
+/// browser session is not an orphan).
+fn matches_dev_tool(args_str: &str) -> bool {
+    const DEV_TOOLS: &[&str] = &[
+        "vite",
+        "webpack",
+        "webpack-dev-server",
+        "esbuild",
+        "tsserver",
+        "jest",
+        "vitest",
+        "playwright",
+        "expo",
+        "metro",
+        "turbo",
+    ];
+    let argv: Vec<&str> = args_str.split_whitespace().collect();
+    let Some(argv0) = argv.first() else {
+        return false;
+    };
+    let base = argv0.rsplit('/').next().unwrap_or(argv0);
+    if INTERPRETERS.contains(&base) || DEV_TOOLS.contains(&base) {
+        return true;
+    }
+    base.ends_with("chrome") && args_str.contains("--headless")
+}
+
+/// Age in seconds from the stat starttime (clock ticks since boot).
+fn age_seconds(start_time: u64, uptime_s: f64) -> f64 {
+    uptime_s - start_time as f64 / CLK_TCK
+}
+
+fn is_orphan_candidate(r: &Row, uptime_s: f64, min_age_s: f64) -> bool {
+    // no controlling tty, and old enough to be a leftover rather than
+    // something the current session just started
+    r.tty_nr == 0 && matches_dev_tool(&r.args) && age_seconds(r.start_time, uptime_s) >= min_age_s
+}
+
+/// Parent is PID 1 or the user's `systemd --user` (desktop sessions
+/// reparent there, not to 1; check both).
+fn parent_is_init_or_user_systemd(root: &Path, ppid: u32) -> bool {
+    if ppid == 1 {
+        return true;
+    }
+    let Some(argv) = procfs::read_cmdline(root, ppid) else {
+        return false;
+    };
+    let joined = argv.join(" ");
+    joined.contains("systemd") && joined.contains("--user")
 }
 
 /// The memory value a view sorts and filters on: PSS in --pss mode, RSS otherwise.
@@ -500,6 +572,58 @@ mod tests {
         assert_eq!(unescape_cgroup("my\\x20app"), "my app");
         assert_eq!(unescape_cgroup("plain"), "plain");
         assert_eq!(unescape_cgroup("bad\\xzz"), "bad\\xzz"); // not hex, kept
+    }
+
+    #[test]
+    fn orphan_heuristic_parts() {
+        // tty, dev-tool match, and age must all hold
+        let mut r = row(1, "vite", 100, None);
+        r.tty_nr = 0;
+        r.start_time = 0;
+        assert!(is_orphan_candidate(&r, 10_000.0, 600.0));
+
+        // attached to a terminal: not an orphan
+        r.tty_nr = 34816;
+        assert!(!is_orphan_candidate(&r, 10_000.0, 600.0));
+        r.tty_nr = 0;
+
+        // too young: probably the current session's own server
+        assert!(!is_orphan_candidate(&r, 601.0, 600.0));
+        assert!(is_orphan_candidate(&r, 700.0, 600.0));
+    }
+
+    #[test]
+    fn dev_tool_matching() {
+        assert!(matches_dev_tool("/usr/bin/node server.js"));
+        assert!(matches_dev_tool("vite"));
+        assert!(matches_dev_tool("npx vite --port 3000"));
+        assert!(matches_dev_tool("google-chrome --headless --dump-dom"));
+        // a real browser session is not an orphan candidate
+        assert!(!matches_dev_tool("google-chrome"));
+        assert!(!matches_dev_tool("firefox"));
+        assert!(!matches_dev_tool(""));
+    }
+
+    #[test]
+    fn orphan_parent_check() {
+        let root = std::env::temp_dir().join(format!("memtop-orphan-{}", std::process::id()));
+        for (pid, cmdline) in [
+            (1u32, Some("/sbin/init splash".to_string())),
+            (500, Some("/usr/lib/systemd/systemd --user".to_string())),
+            (501, Some("/usr/bin/dbus-daemon --session".to_string())),
+            (502, None),
+        ] {
+            let dir = root.join(pid.to_string());
+            fs::create_dir_all(&dir).unwrap();
+            if let Some(c) = cmdline {
+                fs::write(dir.join("cmdline"), c.replace(' ', "\0")).unwrap();
+            }
+        }
+        assert!(parent_is_init_or_user_systemd(&root, 1));
+        assert!(parent_is_init_or_user_systemd(&root, 500)); // systemd --user
+        assert!(!parent_is_init_or_user_systemd(&root, 501)); // dbus-daemon
+        assert!(!parent_is_init_or_user_systemd(&root, 502)); // unreadable
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
