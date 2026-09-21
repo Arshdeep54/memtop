@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::cli::{Args, SortKey};
+use crate::net;
 use crate::procfs;
 use crate::types::{Group, Row};
 
@@ -66,6 +67,7 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
             pss: None,
             uss: None,
             swap: None,
+            ports: Vec::new(),
         });
 
         // smaps_rollup walks page tables — only pay for it when asked
@@ -79,12 +81,30 @@ pub(crate) fn collect_processes(args: &Args) -> Vec<Row> {
         }
     }
 
+    // fd scanning is not free — only when the view needs ports
+    if args.ports || !args.port.is_empty() {
+        let pids: Vec<u32> = rows.iter().map(|r| r.pid).collect();
+        let (by_pid, unreadable) = net::ports_by_pid(root, &pids);
+        for row in &mut rows {
+            if let Some(ports) = by_pid.get(&row.pid) {
+                row.ports = ports.clone();
+            }
+        }
+        if unreadable > 0 {
+            eprintln!("note: ports unavailable for {unreadable} processes, run as root for full data");
+        }
+    }
+
     if let Some(ref user) = args.user {
         rows.retain(|r| &r.user == user);
     }
     if !args.pid.is_empty() {
         let set: HashSet<u32> = args.pid.iter().copied().collect();
         rows.retain(|r| set.contains(&r.pid));
+    }
+    if !args.port.is_empty() {
+        let want: HashSet<u16> = args.port.iter().copied().collect();
+        rows.retain(|r| r.ports.iter().any(|p| want.contains(p)));
     }
 
     rows
@@ -127,10 +147,16 @@ pub(crate) fn aggregate(rows: &[Row], args: &Args, min_mem: Option<u64>) -> Vec<
             count: 0,
             pss: None,
             unreadable: 0,
+            ports: Vec::new(),
         });
         entry.rss += r.rss;
         entry.virt += r.virt;
         entry.count += 1;
+        for p in &r.ports {
+            if !entry.ports.contains(p) {
+                entry.ports.push(*p);
+            }
+        }
         if let Some(pss) = r.pss {
             entry.pss = Some(entry.pss.unwrap_or(0) + pss);
         } else {
@@ -223,6 +249,7 @@ mod tests {
             pss,
             uss: None,
             swap: None,
+            ports: Vec::new(),
         }
     }
 
@@ -244,6 +271,8 @@ mod tests {
             watch: false,
             interval: 2.0,
             kill: false,
+            port: Vec::new(),
+            ports: false,
             command: None,
         }
     }

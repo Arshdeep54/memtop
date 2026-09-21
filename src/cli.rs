@@ -68,6 +68,15 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) pss: bool,
 
+    /// Only show processes owning a listening TCP port (comma-separated,
+    /// repeatable). Implies the PORTS column.
+    #[arg(long, value_delimiter = ',')]
+    pub(crate) port: Vec<u16>,
+
+    /// Show the PORTS column without filtering.
+    #[arg(long)]
+    pub(crate) ports: bool,
+
     /// Track memory growth for this duration (e.g. 30s, 5m) and rank by
     /// growth rate instead of current size.
     #[arg(long, value_name = "DURATION")]

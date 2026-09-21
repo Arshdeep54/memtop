@@ -22,6 +22,8 @@ pub(crate) struct Row {
     pub(crate) uss: Option<u64>,
     /// swap-backed memory, only read when --pss is set
     pub(crate) swap: Option<u64>,
+    /// listening TCP ports, only scanned when --port/--ports is set
+    pub(crate) ports: Vec<u16>,
 }
 
 pub(crate) struct Group {
@@ -33,6 +35,8 @@ pub(crate) struct Group {
     pub(crate) pss: Option<u64>,
     /// members whose PSS could not be read
     pub(crate) unreadable: usize,
+    /// union of member listening ports
+    pub(crate) ports: Vec<u16>,
 }
 
 pub(crate) struct MemInfo {

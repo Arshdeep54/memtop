@@ -87,6 +87,22 @@ fn mem_cell(value: Option<u64>, args: &Args) -> String {
     }
 }
 
+fn ports_cell(ports: &[u16]) -> String {
+    if ports.is_empty() {
+        "-".to_string()
+    } else {
+        ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn show_ports(args: &Args) -> bool {
+    args.ports || !args.port.is_empty()
+}
+
 pub(crate) fn render_json(rows: &[Row], args: &Args) -> String {
     let procs: Vec<serde_json::Value> = rows
         .iter()
@@ -105,6 +121,9 @@ pub(crate) fn render_json(rows: &[Row], args: &Args) -> String {
                 v["pss_bytes"] = serde_json::json!(r.pss);
                 v["uss_bytes"] = serde_json::json!(r.uss);
                 v["swap_bytes"] = serde_json::json!(r.swap);
+            }
+            if show_ports(args) {
+                v["ports"] = serde_json::json!(r.ports);
             }
             v
         })
@@ -133,6 +152,9 @@ pub(crate) fn render_groups_json(groups: &[Group], args: &Args, total_mem: u64) 
             if args.pss {
                 v["pss_bytes"] = serde_json::json!(g.pss);
                 v["unreadable"] = serde_json::json!(g.unreadable);
+            }
+            if show_ports(args) {
+                v["ports"] = serde_json::json!(g.ports);
             }
             v
         })
@@ -170,7 +192,7 @@ pub(crate) fn render_groups(groups: &[Group], args: &Args, total_mem: u64) -> St
         .collect();
     let cnt_s: Vec<String> = groups.iter().map(|g| g.count.to_string()).collect();
 
-    let cols = vec![
+    let mut cols = vec![
         Col {
             header: "PROCESS",
             cells: groups.iter().map(|g| g.name.clone()).collect(),
@@ -192,6 +214,14 @@ pub(crate) fn render_groups(groups: &[Group], args: &Args, total_mem: u64) -> St
             right: true,
         },
     ];
+
+    if show_ports(args) {
+        cols.push(Col {
+            header: "PORTS",
+            cells: groups.iter().map(|g| ports_cell(&g.ports)).collect(),
+            right: true,
+        });
+    }
 
     render_columns(&cols)
 }
@@ -255,6 +285,14 @@ pub(crate) fn render_table(rows: &[Row], args: &Args) -> String {
         cols.push(Col {
             header: "THR",
             cells: rows.iter().map(|r| r.threads.to_string()).collect(),
+            right: true,
+        });
+    }
+
+    if show_ports(args) {
+        cols.push(Col {
+            header: "PORTS",
+            cells: rows.iter().map(|r| ports_cell(&r.ports)).collect(),
             right: true,
         });
     }

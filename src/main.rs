@@ -2,6 +2,7 @@ mod cli;
 mod format;
 mod kill;
 mod mem;
+mod net;
 mod proc;
 mod procfs;
 mod render;
