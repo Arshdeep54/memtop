@@ -48,7 +48,26 @@ memtop -g              # grouped by application, biggest hog first
 memtop -g -c 10        # top 10 apps
 memtop -S              # system RAM summary only
 memtop -k              # interactive kill mode (arrow keys + Enter)
+memtop run -- cargo build --release   # peak memory of a command
 ```
+
+### `memtop run -- <cmd>`
+
+Reports the peak memory a command and **all its descendants** reached — for
+sizing CI machines, Docker limits, or test suites. The child inherits your
+terminal, so its output is untouched; the report goes to stderr, and memtop
+exits with the child's exit code (signals → `128 + signo`).
+
+```bash
+memtop run -- python3 -c "b=bytearray(300*1024*1024)"
+# memtop run: peak 301.5 MiB across 1 processes (at 0.3s)
+# wall: 1.0s   exit: 0
+```
+
+Sampled every 100 ms (`--interval-ms`). Known limits: spikes shorter than the
+sampling interval are missed; double-forking daemons reparent to PID 1 and
+leave the tracked tree; the peak is the sum of per-sample PSS, not a kernel
+high-water mark; on Ctrl-C both memtop and the child die without a report.
 
 ### Options
 

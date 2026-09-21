@@ -1,8 +1,14 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
-/// Show running processes ordered by memory usage (wraps `ps` and /proc/meminfo).
+/// Show running processes ordered by memory usage.
 #[derive(Parser)]
-#[command(name = "memtop", version, about, long_about = None)]
+#[command(
+    name = "memtop",
+    version,
+    about,
+    long_about = None,
+    args_conflicts_with_subcommands = true
+)]
 pub(crate) struct Args {
     /// Number of processes (or groups with --group) to display.
     #[arg(short, long)]
@@ -65,6 +71,27 @@ pub(crate) struct Args {
     /// Interactively select and kill a process.
     #[arg(short = 'k', long)]
     pub(crate) kill: bool,
+
+    #[command(subcommand)]
+    pub(crate) command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum Command {
+    /// Run a command and report the peak memory it and its descendants reached
+    Run {
+        /// Print the report as a single JSON object (to stderr)
+        #[arg(long)]
+        json: bool,
+
+        /// Sampling interval in milliseconds
+        #[arg(long, default_value_t = 100)]
+        interval_ms: u64,
+
+        /// The command to run (everything after `--`)
+        #[arg(trailing_var_arg = true)]
+        cmd: Vec<String>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]

@@ -243,6 +243,7 @@ mod tests {
             watch: false,
             interval: 2.0,
             kill: false,
+            command: None,
         }
     }
 

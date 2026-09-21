@@ -5,6 +5,7 @@ mod mem;
 mod proc;
 mod procfs;
 mod render;
+mod run;
 mod types;
 
 use std::io::{self, Write};
@@ -23,7 +24,20 @@ use render::{
 };
 
 fn main() {
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    // subcommands own the whole flow; flags never mix with them
+    match args.command.take() {
+        Some(cli::Command::Run {
+            json,
+            interval_ms,
+            cmd,
+        }) => {
+            run::run(json, interval_ms, cmd);
+            return;
+        }
+        None => {}
+    }
 
     if args.watch && args.json {
         eprintln!("error: --watch and --json cannot be combined");
