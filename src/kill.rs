@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use std::process::{exit, Command};
 
@@ -17,6 +17,11 @@ use crate::procfs;
 use crate::types::Row;
 
 pub(crate) fn interactive_kill(args: &Args, min_mem: Option<u64>) {
+    if !io::stdout().is_terminal() {
+        eprintln!("error: -k requires a terminal (stdout is not a tty)");
+        exit(2);
+    }
+
     if let Err(e) = terminal::enable_raw_mode() {
         eprintln!("error: failed to enable raw mode: {e}");
         exit(1);

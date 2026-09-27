@@ -222,8 +222,14 @@ fn run_watch(args: &Args, min_mem: Option<u64>) {
         let mut out = String::new();
         out.push_str("\x1b[2J\x1b[H");
         out.push_str(&render_table(&rows, args));
-        let _ = stdout.write_all(out.as_bytes());
-        let _ = stdout.flush();
+        if let Err(e) = stdout.write_all(out.as_bytes()) {
+            eprintln!("error: write failed, exiting watch: {e}");
+            exit(1);
+        }
+        if let Err(e) = stdout.flush() {
+            eprintln!("error: flush failed, exiting watch: {e}");
+            exit(1);
+        }
         thread::sleep(Duration::from_secs_f64(args.interval));
     }
 }

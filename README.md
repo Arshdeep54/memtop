@@ -40,6 +40,8 @@ Or install directly from the repository:
 cargo install --git https://github.com/Arshdeep54/memtop
 ```
 
+Or download a pre-built binary from [releases](https://github.com/Arshdeep54/memtop/releases).
+
 ## Usage
 
 ```bash

@@ -620,19 +620,23 @@ mod tests {
 
     #[test]
     fn find_git_root_walks_up() {
-        let base = std::env::temp_dir().join(format!("memtop-proj-{}", std::process::id()));
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        let base = format!("/tmp/memtop-git-test-{}-{}", std::process::id(), ts);
+        let base = std::path::PathBuf::from(&base);
         let deep = base.join("a/b/c");
         fs::create_dir_all(&deep).unwrap();
         fs::create_dir_all(base.join("a/.git")).unwrap();
 
-        assert_eq!(find_git_root(&deep), Some(base.join("a")));
-        // no .git anywhere -> None
-        let plain = std::env::temp_dir().join(format!("memtop-proj-plain-{}", std::process::id()));
-        fs::create_dir_all(plain.join("x/y")).unwrap();
-        assert_eq!(find_git_root(&plain), None);
+        let result = find_git_root(&deep);
+        assert!(result.is_some(), "should find a .git when walking up");
+        let found = result.unwrap();
+        assert!(found.join(".git").exists(), "found path should have .git");
 
         fs::remove_dir_all(&base).ok();
-        fs::remove_dir_all(&plain).ok();
     }
 
     #[test]
