@@ -22,24 +22,30 @@ case "$OS:$ARCH" in
 esac
 
 LATEST=$(curl -s "$REPO/releases/latest" | grep -oP '"tag_name": "\K[^"]+' || echo "")
-if [ -z "$LATEST" ]; then
-  echo "error: could not fetch latest release"
-  exit 1
+if [ -n "$LATEST" ]; then
+  RELEASE_URL="$REPO/releases/download/$LATEST/memtop-$TARGET"
+  if curl -fL --max-time 5 "$RELEASE_URL" -o "$BIN_DIR/memtop" 2>/dev/null; then
+    chmod +x "$BIN_DIR/memtop"
+    echo "✓ memtop $LATEST installed from release"
+  else
+    echo "note: pre-built binary unavailable, building from source..."
+    cargo install --git "$REPO" --force
+    exit 0
+  fi
+else
+  echo "note: no releases found, installing via cargo..."
+  if ! command -v cargo &> /dev/null; then
+    echo "error: cargo not found. install Rust: https://rustup.rs/"
+    exit 1
+  fi
+  cargo install --git "$REPO"
+  exit 0
 fi
-
-RELEASE_URL="$REPO/releases/download/$LATEST/memtop-$TARGET"
-echo "Installing memtop $LATEST from $RELEASE_URL"
-
-curl -fL "$RELEASE_URL" -o "$BIN_DIR/memtop"
-chmod +x "$BIN_DIR/memtop"
 
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
-  echo ""
   echo "warning: $BIN_DIR is not in your PATH"
-  echo "add this to your shell rc (~/.bashrc, ~/.zshrc, etc):"
-  echo "  export PATH=\"$BIN_DIR:\$PATH\""
-  echo ""
+  echo "add to your shell rc: export PATH=\"$BIN_DIR:\$PATH\""
 fi
 
-echo "✓ memtop installed to $BIN_DIR/memtop"
-echo "  run: memtop --help"
+echo "✓ memtop ready"
+memtop --help | head -3
