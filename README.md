@@ -25,22 +25,27 @@ reports — no `ps` parsing in between.
 
 ## Install
 
+**Fastest (recommended):**
+
 ```bash
-git clone https://github.com/Arshdeep54/memtop
-cd memtop
-cargo build --release
-install -m 755 target/release/memtop ~/.local/bin/memtop
+curl https://memtop.hiesenbug.dev/install.sh | bash
 ```
 
-Make sure `~/.local/bin` is on your `PATH` (add it to your shell rc if not).
-
-Or install directly from the repository:
+Or with `cargo`:
 
 ```bash
 cargo install --git https://github.com/Arshdeep54/memtop
 ```
 
-Or download a pre-built binary from [releases](https://github.com/Arshdeep54/memtop/releases).
+Or build from source:
+
+```bash
+git clone https://github.com/Arshdeep54/memtop
+cd memtop && cargo build --release
+install -m 755 target/release/memtop ~/.local/bin/memtop
+```
+
+Make sure `~/.local/bin` is on your `$PATH` if not already.
 
 ## Usage
 
