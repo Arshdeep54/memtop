@@ -11,6 +11,7 @@ mod render;
 mod run;
 mod track;
 mod types;
+mod update;
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -50,8 +51,13 @@ fn main() {
             config,
             dry_run,
             once,
+            action,
         }) => {
-            guard::guard(&args, config, dry_run, once);
+            guard::guard(&args, config, dry_run, once, action);
+            return;
+        }
+        Some(cli::Command::Update { check }) => {
+            update::update(check);
             return;
         }
         None => {}

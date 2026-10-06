@@ -1,13 +1,15 @@
 use std::path::{Path, PathBuf};
-use std::process::exit;
+use std::process::{Command, exit};
 use std::thread;
 use std::time::Duration;
 
-use crate::cli::Args;
+use crate::cli::{Args, GuardAction};
 use crate::kill::kill_pids;
 use crate::mem::{self, Pressure};
 use crate::proc::collect_processes;
 use crate::types::MemInfo;
+
+pub(crate) const SERVICE: &str = "memtop-guard";
 
 const EXAMPLE: &str = "\
 mem_available_below_pct = 8
@@ -155,11 +157,92 @@ fn act(args: &Args, cfg: &Config, dry_run: bool) -> bool {
     false
 }
 
-pub(crate) fn guard(args: &Args, config: Option<PathBuf>, dry_run: bool, once: bool) {
+fn systemctl(args: &[&str]) -> bool {
+    match Command::new("systemctl").arg("--user").args(args).status() {
+        Ok(s) => s.success(),
+        Err(e) => {
+            eprintln!("error: failed to run systemctl: {e}");
+            false
+        }
+    }
+}
+
+fn unit_path() -> PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    Path::new(&home).join(format!(".config/systemd/user/{SERVICE}.service"))
+}
+
+/// Install the user unit and enable it: runs now and on every login.
+fn start(path: &Path) {
+    if !path.exists() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(path, format!("{EXAMPLE}\n")).unwrap_or_else(|e| {
+            eprintln!("error: cannot write {}: {e}", path.display());
+            exit(1);
+        });
+        eprintln!(
+            "created {}: edit `apps` to what you want killed, then run `memtop guard start` again",
+            path.display()
+        );
+        return;
+    }
+    let invalid = std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|t| parse_config(&t).map(|_| ()));
+    if let Err(e) = invalid {
+        eprintln!("error: {}: {e}", path.display());
+        exit(2);
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|e| {
+        eprintln!("error: current exe: {e}");
+        exit(1);
+    });
+    let unit = format!(
+        "[Unit]\nDescription=memtop guard: kill configured apps before memory exhaustion\n\n\
+         [Service]\nExecStart=\"{}\" guard --config \"{}\"\nRestart=on-failure\n\n\
+         [Install]\nWantedBy=default.target\n",
+        exe.display(),
+        path.display()
+    );
+    let unit_file = unit_path();
+    if let Some(dir) = unit_file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&unit_file, unit) {
+        eprintln!("error: cannot write {}: {e}", unit_file.display());
+        exit(1);
+    }
+    if !(systemctl(&["daemon-reload"]) && systemctl(&["enable", "--now", SERVICE])) {
+        exit(1);
+    }
+    println!("guard running and enabled at login. stop it with `memtop guard stop`");
+}
+
+pub(crate) fn guard(
+    args: &Args,
+    config: Option<PathBuf>,
+    dry_run: bool,
+    once: bool,
+    action: Option<GuardAction>,
+) {
     let Some(path) = config.or_else(default_config_path) else {
         eprintln!("error: no --config given and HOME is unset");
         exit(2);
     };
+    match action {
+        Some(GuardAction::Start) => return start(&path),
+        Some(GuardAction::Stop) => {
+            // disable too, or it would come back at the next login
+            if !systemctl(&["disable", "--now", SERVICE]) {
+                exit(1);
+            }
+            return println!("guard stopped and disabled");
+        }
+        Some(GuardAction::Status) => exit(if systemctl(&["status", "--no-pager", SERVICE]) { 0 } else { 3 }),
+        None => {}
+    }
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         eprintln!(
             "error: cannot read {}: {e}\nexample config:\n{EXAMPLE}",

@@ -29,6 +29,15 @@ Or `cargo install --git https://github.com/Arshdeep54/memtop`
 
 Or build: `git clone ... && cd memtop && cargo build --release`
 
+### Update
+
+```bash
+memtop update --check   # is a newer release available?
+memtop update           # replace this binary with the latest release (restarts a running guard)
+```
+
+`update` needs `curl` and downloads the pre-built release binary for your CPU (x86_64 or aarch64). If you installed an older version that has no `update` command, re-run the install one-liner once.
+
 ## Modes
 
 ### Default views
@@ -114,7 +123,14 @@ apps = ["zen", "chrome", "slack"]   # matches the executable name: zen, zen-bin,
 ```bash
 memtop guard --dry-run   # log what would be killed
 memtop guard --once      # check once and exit
-cp contrib/memtop-guard.service ~/.config/systemd/user/ && systemctl --user enable --now memtop-guard
+```
+
+Run it in the background (systemd user service, starts at every login):
+```bash
+memtop guard start    # first run creates the config template, edit `apps`, run it again
+memtop guard status   # running? shows recent log lines
+memtop guard stop     # stop now and disable at login
+journalctl --user -u memtop-guard   # what it killed and when
 ```
 
 ## Options

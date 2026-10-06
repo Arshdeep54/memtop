@@ -166,7 +166,27 @@ pub(crate) enum Command {
         /// Check once and exit instead of looping
         #[arg(long)]
         once: bool,
+
+        #[command(subcommand)]
+        action: Option<GuardAction>,
     },
+
+    /// Update memtop to the latest release
+    Update {
+        /// Only report whether a newer version exists
+        #[arg(long)]
+        check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum GuardAction {
+    /// Run guard in the background (systemd user service), also at every login
+    Start,
+    /// Stop the background guard and disable it at login
+    Stop,
+    /// Show whether the background guard is running
+    Status,
 }
 
 #[derive(Clone, Copy, ValueEnum)]

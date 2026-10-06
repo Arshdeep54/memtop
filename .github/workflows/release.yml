@@ -31,10 +31,13 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Name asset like install.sh and `memtop update` expect
+        run: cp target/${{ matrix.target }}/release/memtop ${{ matrix.artifact }}
+
       - name: Upload artifact
         uses: softprops/action-gh-release@v1
         with:
-          files: target/${{ matrix.target }}/release/memtop
+          files: ${{ matrix.artifact }}
           name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
