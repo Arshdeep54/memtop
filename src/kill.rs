@@ -332,7 +332,7 @@ fn render_kill_screen(stdout: &mut io::Stdout, view: &KillView, status: Option<&
 /// Signal a set of (pid, start_time) targets with one `kill` call. Each
 /// target's start_time is re-read immediately before signalling; a changed
 /// start_time means the pid was reused and is skipped.
-fn kill_pids(targets: &[(u32, u64)], signal: &str) -> Result<String, String> {
+pub(crate) fn kill_pids(targets: &[(u32, u64)], signal: &str) -> Result<String, String> {
     let sig = signal.trim().to_ascii_uppercase();
     let sig = sig.strip_prefix("SIG").unwrap_or(&sig).to_string();
 

@@ -1,6 +1,7 @@
 mod cli;
 mod diff;
 mod format;
+mod guard;
 mod kill;
 mod mem;
 mod net;
@@ -43,6 +44,14 @@ fn main() {
         }
         Some(cli::Command::Diff { before, after }) => {
             diff::diff(before, after, &args);
+            return;
+        }
+        Some(cli::Command::Guard {
+            config,
+            dry_run,
+            once,
+        }) => {
+            guard::guard(&args, config, dry_run, once);
             return;
         }
         None => {}

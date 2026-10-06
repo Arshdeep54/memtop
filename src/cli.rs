@@ -151,6 +151,22 @@ pub(crate) enum Command {
         /// Snapshot file taken after (omit to scan now)
         after: Option<std::path::PathBuf>,
     },
+
+    /// Watch memory and swap; when the system is about to choke, kill the
+    /// configured apps (see ~/.config/memtop/guard.toml)
+    Guard {
+        /// Config file (default: ~/.config/memtop/guard.toml)
+        #[arg(long)]
+        config: Option<std::path::PathBuf>,
+
+        /// Log what would be killed instead of killing it
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Check once and exit instead of looping
+        #[arg(long)]
+        once: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]

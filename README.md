@@ -94,6 +94,29 @@ memtop --orphans    # stale dev processes from dead sessions
 
 Finds background processes (node, vite, jest, etc.) that lost their controlling terminal and are older than 10 minutes. Experimental heuristic.
 
+### Guard (kill apps before the system chokes)
+
+`memtop guard` polls `/proc/meminfo` and `/proc/pressure/memory` and, when memory is about to run out, kills the apps you list, one app per trigger, in order (SIGTERM, then SIGKILL after `grace_secs`). All processes of an app are killed, e.g. every `zen-bin` content process.
+
+Trigger: available RAM below `mem_available_below_pct` **and** (swap used above `swap_used_above_pct` **or** PSI `full avg10` above `psi_full_avg10_above`). Low RAM alone is normal cache behaviour, so it never fires on its own.
+
+`~/.config/memtop/guard.toml`:
+```toml
+mem_available_below_pct = 8
+swap_used_above_pct = 85
+psi_full_avg10_above = 5
+interval_secs = 1
+cooldown_secs = 5   # pause after a kill so memory can be freed
+grace_secs = 3      # TERM -> KILL delay
+apps = ["zen", "chrome", "slack"]   # matches the executable name: zen, zen-bin, zen_x, not frozen
+```
+
+```bash
+memtop guard --dry-run   # log what would be killed
+memtop guard --once      # check once and exit
+cp contrib/memtop-guard.service ~/.config/systemd/user/ && systemctl --user enable --now memtop-guard
+```
+
 ## Options
 
 | Flag | Description |
