@@ -78,7 +78,16 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
     if cfg.apps.is_empty() {
         return Err("`apps` is empty, nothing to guard".to_string());
     }
-    if cfg.interval_secs <= 0.0 {
+    // Duration::from_secs_f64 panics on negative/NaN, and it would do so right after a kill
+    for (name, v) in [
+        ("cooldown_secs", cfg.cooldown_secs),
+        ("grace_secs", cfg.grace_secs),
+    ] {
+        if !(v.is_finite() && v >= 0.0) {
+            return Err(format!("{name} must be zero or positive"));
+        }
+    }
+    if !(cfg.interval_secs.is_finite() && cfg.interval_secs > 0.0) {
         return Err("interval_secs must be positive".to_string());
     }
     Ok(cfg)
@@ -214,7 +223,8 @@ fn start(path: &Path) {
         eprintln!("error: cannot write {}: {e}", unit_file.display());
         exit(1);
     }
-    if !(systemctl(&["daemon-reload"]) && systemctl(&["enable", "--now", SERVICE])) {
+    if !(systemctl(&["daemon-reload"]) && systemctl(&["enable", SERVICE])
+        && systemctl(&["restart", SERVICE])) {
         exit(1);
     }
     println!("guard running and enabled at login. stop it with `memtop guard stop`");
@@ -308,6 +318,9 @@ mod tests {
         assert!(parse_config("apps = [\"a\"]\ntypo = 1").unwrap_err().contains("unknown key"));
         assert!(parse_config("apps = [\"a\"]\ninterval_secs = x").unwrap_err().contains("number"));
         assert!(parse_config("apps = zen").unwrap_err().contains("apps must"));
+        for bad in ["grace_secs = -1", "cooldown_secs = nan", "interval_secs = 0"] {
+            assert!(parse_config(&format!("apps = [\"a\"]\n{bad}")).is_err(), "{bad}");
+        }
     }
 
     #[test]
