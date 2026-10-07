@@ -21,7 +21,8 @@ case "$OS:$ARCH" in
     ;;
 esac
 
-LATEST=$(curl -s "$REPO/releases/latest" | grep -oP '"tag_name": "\K[^"]+' || echo "")
+# /releases/latest redirects to /releases/tag/<tag>
+LATEST=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$REPO/releases/latest" | grep -oP '/tag/\K.+' || echo "")
 if [ -n "$LATEST" ]; then
   RELEASE_URL="$REPO/releases/download/$LATEST/memtop-$TARGET"
   if curl -fL --max-time 5 "$RELEASE_URL" -o "$BIN_DIR/memtop" 2>/dev/null; then
