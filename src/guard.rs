@@ -160,6 +160,9 @@ fn act(args: &Args, cfg: &Config, dry_run: bool) -> bool {
                 eprintln!("guard: KILL: {e}");
             }
         }
+        let _ = Command::new("notify-send")
+            .args(["-u", "critical", "memtop guard", &format!("memory critical: killed {app}")])
+            .status();
         return true;
     }
     eprintln!("guard: memory critical but none of the configured apps are running");
@@ -210,7 +213,8 @@ fn start(path: &Path) {
     });
     let unit = format!(
         "[Unit]\nDescription=memtop guard: kill configured apps before memory exhaustion\n\n\
-         [Service]\nExecStart=\"{}\" guard --config \"{}\"\nRestart=on-failure\n\n\
+         [Service]\nExecStart=\"{}\" guard --config \"{}\"\nRestart=on-failure\n\
+         CPUWeight=1000\nMemoryLow=64M\n\n\
          [Install]\nWantedBy=default.target\n",
         exe.display(),
         path.display()
@@ -265,6 +269,10 @@ pub(crate) fn guard(
         exit(2);
     });
     eprintln!("guard: watching, apps in kill order: {}", cfg.apps.join(", "));
+    // catches typos and wrong process names now, not during the emergency
+    for app in cfg.apps.iter().filter(|a| app_targets(args, a).is_empty()) {
+        eprintln!("guard: note: no running process matches `{app}` (fine if it is just closed)");
+    }
 
     loop {
         let psi = mem::read_pressure(Path::new("/proc"));

@@ -4,8 +4,13 @@ use std::time::Duration;
 /// Thresholds that always trigger: avail < 101% and swap used > -1%.
 const FORCED: &str = "mem_available_below_pct = 101\nswap_used_above_pct = -1\ngrace_secs = 0.2\n";
 
+/// copy+spawn must not overlap across tests: a fork can inherit another
+/// test's open write fd and the exec then fails with "Text file busy"
+static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A copy of `sleep` under a unique name, so only our victim matches.
 fn victim(tag: &str) -> (std::process::Child, std::path::PathBuf, String) {
+    let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("memtop-guard-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let name = format!("guardvictim{tag}");

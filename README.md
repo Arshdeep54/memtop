@@ -107,6 +107,8 @@ Finds background processes (node, vite, jest, etc.) that lost their controlling 
 
 `memtop guard` polls `/proc/meminfo` and `/proc/pressure/memory` and, when memory is about to run out, kills the apps you list, one app per trigger, in order (SIGTERM, then SIGKILL after `grace_secs`). All processes of an app are killed, e.g. every `zen-bin` content process.
 
+After a kill it sends a desktop notification (needs `notify-send`; skipped silently if missing). At startup it logs a note for each configured app that isn't running, which catches wrong process names. The service runs with a high CPU weight and `MemoryLow=64M` so it keeps running while the system is thrashing.
+
 Trigger: available RAM below `mem_available_below_pct` **and** (swap used above `swap_used_above_pct` **or** PSI `full avg10` above `psi_full_avg10_above`). Low RAM alone is normal cache behaviour, so it never fires on its own.
 
 `~/.config/memtop/guard.toml`:
