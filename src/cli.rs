@@ -181,7 +181,9 @@ pub(crate) enum Command {
 
 #[derive(Subcommand)]
 pub(crate) enum GuardAction {
-    /// Run guard in the background (systemd user service), also at every login
+    /// Run guard in the background (systemd user service), also at every login.
+    /// Also applies config changes to an already running guard
+    #[command(visible_alias = "restart")]
     Start,
     /// Stop the background guard and disable it at login
     Stop,

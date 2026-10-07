@@ -131,6 +131,7 @@ Run it in the background (systemd user service, starts at every login):
 ```bash
 memtop guard start    # first run creates the config template, edit `apps`, run it again
 memtop guard status   # running? shows recent log lines
+memtop guard restart  # apply config changes (same as start)
 memtop guard stop     # stop now and disable at login
 journalctl --user -u memtop-guard   # what it killed and when
 ```
