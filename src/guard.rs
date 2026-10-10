@@ -193,7 +193,14 @@ fn act(args: &Args, cfg: &Config, dry_run: bool) -> bool {
             }
         }
         let _ = Command::new("notify-send")
-            .args(["-u", "critical", "memtop guard", &format!("memory critical: killed {app}")])
+            .args([
+                "-u",
+                "normal",
+                "-t",
+                "10000",
+                "memtop guard",
+                &format!("memory critical: killed {app}"),
+            ])
             .status();
         return true;
     }
