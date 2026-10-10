@@ -22,7 +22,7 @@ memtop run -- cargo build  # peak memory of a command
 ## Install
 
 ```bash
-curl https://memtop.hiesenbug.dev/install.sh | bash
+curl -fsSL https://memtop.hiesenbug.dev/install.sh | bash
 ```
 
 Or `cargo install --git https://github.com/Arshdeep54/memtop`
@@ -36,7 +36,7 @@ memtop update --check   # is a newer release available?
 memtop update           # replace this binary with the latest release (restarts a running guard)
 ```
 
-`update` needs `curl` and downloads the pre-built release binary for your CPU (x86_64 or aarch64). If you installed an older version that has no `update` command, re-run the install one-liner once.
+`update` needs `curl` and downloads a pre-built release binary. If you installed a version without the `update` command, re-run the install one-liner above. The `v0.2.0` release currently has an x86_64 binary but no aarch64 binary; on aarch64, update from source with `cargo install --git https://github.com/Arshdeep54/memtop --force`.
 
 ## Modes
 
@@ -122,6 +122,8 @@ grace_secs = 3      # TERM -> KILL delay
 apps = ["zen", "chrome", "slack"]   # matches the executable name: zen, zen-bin, zen_x, not frozen
 ```
 
+If you installed a version that does not recognize the `guard` command, reinstall using the command in [Install](#install); the guard is included starting with `v0.2.0`. On first start, memtop creates this config and exits. Edit the `apps` list (and thresholds if needed), then run `memtop guard start` again. If `XDG_CONFIG_HOME` is set, the config is at `$XDG_CONFIG_HOME/memtop/guard.toml` instead.
+
 ```bash
 memtop guard --dry-run   # log what would be killed
 memtop guard --once      # check once and exit
@@ -129,12 +131,13 @@ memtop guard --once      # check once and exit
 
 Run it in the background (systemd user service, starts at every login):
 ```bash
-memtop guard start    # first run creates the config template, edit `apps`, run it again
+memtop guard start    # first run creates config; run again after editing to start/apply changes
 memtop guard status   # running? shows recent log lines
-memtop guard restart  # apply config changes (same as start)
 memtop guard stop     # stop now and disable at login
 journalctl --user -u memtop-guard   # what it killed and when
 ```
+
+The `restart` alias is available in builds from `main`; it is not in the `v0.2.0` release binary.
 
 ## Options
 
