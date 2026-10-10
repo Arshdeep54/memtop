@@ -11,14 +11,46 @@ use crate::types::MemInfo;
 
 pub(crate) const SERVICE: &str = "memtop-guard";
 
-const EXAMPLE: &str = "\
-mem_available_below_pct = 8
-swap_used_above_pct = 85
+const EXAMPLE: &str = r#"# memtop guard config. Edit the thresholds and app list before starting.
+# After editing an active config, run `memtop guard start` again to apply it.
+#
+# The guard acts only when RAM is nearly gone AND the system is under memory
+# pressure. Low RAM alone is normal: Linux uses spare memory as cache.
+#
+# Trigger condition:
+#   available RAM < mem_available_below_pct
+#     AND (swap used > swap_used_above_pct
+#          OR memory PSI full avg10 > psi_full_avg10_above)
+
+# Available RAM threshold as a percent of total RAM. Higher values act sooner.
+# 5 means the guard can act when less than 5% is available.
+mem_available_below_pct = 5
+
+# Swap usage threshold as a percent of total swap. Without swap, this signal
+# stays at 0; the PSI threshold can still trigger the guard.
+swap_used_above_pct = 90
+
+# Memory stall threshold from /proc/pressure/memory (full avg10), in percent.
+# It measures how much of the last 10 seconds all non-idle tasks stalled on
+# memory. Lower values act sooner when the system starts freezing.
 psi_full_avg10_above = 5
+
+# Check memory this often, in seconds.
 interval_secs = 1
+
+# Wait this long after a trigger before checking again, so memory can recover.
+# If pressure remains high, the next app in the list may be killed.
 cooldown_secs = 5
+
+# Send SIGTERM first; after this many seconds, send SIGKILL to survivors.
 grace_secs = 3
-apps = [\"zen\", \"chrome\", \"slack\"]";
+
+# Apps to kill, in priority order: one app per trigger, first running match
+# first. All matching processes are killed. Replace these examples with apps
+# you are willing to close; put the least important app first.
+# `memtop -g` shows app names. "zen" matches zen, zen-bin, zen_helper, but
+# not "frozen" or "zenity".
+apps = ["zen", "slack"]"#;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Config {
@@ -195,7 +227,7 @@ fn start(path: &Path) {
             exit(1);
         });
         eprintln!(
-            "created {}: edit `apps` to what you want killed, then run `memtop guard start` again",
+            "created {} (service not started). Review the thresholds and replace the example apps, then run `memtop guard start` again",
             path.display()
         );
         return;
@@ -314,10 +346,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_example_and_defaults() {
+    fn parse_example_and_values() {
         let c = parse_config(EXAMPLE).unwrap();
-        assert_eq!(c.apps, ["zen", "chrome", "slack"]);
-        assert_eq!(c, parse_config("apps = [\"zen\", \"chrome\", \"slack\"] # c").unwrap());
+        assert_eq!(c.apps, ["zen", "slack"]);
+        assert_eq!(
+            c,
+            parse_config(
+                "mem_available_below_pct = 5\nswap_used_above_pct = 90\npsi_full_avg10_above = 5\ninterval_secs = 1\ncooldown_secs = 5\ngrace_secs = 3\napps = [\"zen\", \"slack\"]"
+            )
+            .unwrap()
+        );
     }
 
     #[test]

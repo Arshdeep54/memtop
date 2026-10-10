@@ -155,7 +155,7 @@ pub(crate) enum Command {
     /// Watch memory and swap; when the system is about to choke, kill the
     /// configured apps (see ~/.config/memtop/guard.toml)
     Guard {
-        /// Config file (default: ~/.config/memtop/guard.toml)
+        /// Config file (default: $XDG_CONFIG_HOME/memtop/guard.toml or ~/.config/memtop/guard.toml)
         #[arg(long)]
         config: Option<std::path::PathBuf>,
 
@@ -181,8 +181,8 @@ pub(crate) enum Command {
 
 #[derive(Subcommand)]
 pub(crate) enum GuardAction {
-    /// Run guard in the background (systemd user service), also at every login.
-    /// Also applies config changes to an already running guard
+    /// Start/restart the systemd user service and enable it at login.
+    /// If config is missing, write a template and exit without starting.
     #[command(visible_alias = "restart")]
     Start,
     /// Stop the background guard and disable it at login

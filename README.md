@@ -36,7 +36,7 @@ memtop update --check   # is a newer release available?
 memtop update           # replace this binary with the latest release (restarts a running guard)
 ```
 
-`update` needs `curl` and downloads a pre-built release binary. If you installed a version without the `update` command, re-run the install one-liner above. The `v0.2.0` release currently has an x86_64 binary but no aarch64 binary; on aarch64, update from source with `cargo install --git https://github.com/Arshdeep54/memtop --force`.
+`update` needs `curl` and downloads a pre-built release binary for x86_64 or aarch64. If you installed a version without the `update` command, re-run the install one-liner above.
 
 ## Modes
 
@@ -111,18 +111,16 @@ After a kill it sends a desktop notification (needs `notify-send`; skipped silen
 
 Trigger: available RAM below `mem_available_below_pct` **and** (swap used above `swap_used_above_pct` **or** PSI `full avg10` above `psi_full_avg10_above`). Low RAM alone is normal cache behaviour, so it never fires on its own.
 
-`~/.config/memtop/guard.toml`:
-```toml
-mem_available_below_pct = 8
-swap_used_above_pct = 85
-psi_full_avg10_above = 5
-interval_secs = 1
-cooldown_secs = 5   # pause after a kill so memory can be freed
-grace_secs = 3      # TERM -> KILL delay
-apps = ["zen", "chrome", "slack"]   # matches the executable name: zen, zen-bin, zen_x, not frozen
-```
+If you installed a version that does not recognize the `guard` command, reinstall using the command in [Install](#install); the guard is included starting with `v0.2.0`.
 
-If you installed a version that does not recognize the `guard` command, reinstall using the command in [Install](#install); the guard is included starting with `v0.2.0`. On first start, memtop creates this config and exits. Edit the `apps` list (and thresholds if needed), then run `memtop guard start` again. If `XDG_CONFIG_HOME` is set, the config is at `$XDG_CONFIG_HOME/memtop/guard.toml` instead.
+Set it up once:
+
+1. Run `memtop guard start`. On the first run, memtop writes a commented config template and exits without starting the service.
+2. Edit `~/.config/memtop/guard.toml`. Review the thresholds and replace the example apps with apps you are willing to close; the first running app in the list is killed first. Use `memtop -g` to see app names. If `XDG_CONFIG_HOME` is set, the file is at `$XDG_CONFIG_HOME/memtop/guard.toml` instead.
+3. Optionally check the config with `memtop guard --dry-run --once`; it reports what it would kill without killing anything.
+4. Run `memtop guard start` again. It validates the config, starts the systemd user service, and enables it at login.
+
+The generated template explains each setting. It starts with available RAM below 5%, swap above 90% or memory PSI full avg10 above 5%, checks every second, waits 5 seconds between triggers, and allows 3 seconds between SIGTERM and SIGKILL.
 
 ```bash
 memtop guard --dry-run   # log what would be killed
@@ -131,13 +129,12 @@ memtop guard --once      # check once and exit
 
 Run it in the background (systemd user service, starts at every login):
 ```bash
-memtop guard start    # first run creates config; run again after editing to start/apply changes
 memtop guard status   # running? shows recent log lines
 memtop guard stop     # stop now and disable at login
 journalctl --user -u memtop-guard   # what it killed and when
 ```
 
-The `restart` alias is available in builds from `main`; it is not in the `v0.2.0` release binary.
+After editing the config later, run `memtop guard start` again to apply the changes.
 
 ## Options
 

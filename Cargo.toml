@@ -1,6 +1,6 @@
 [package]
 name = "memtop"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "A Linux CLI that lists processes by memory usage, with app grouping, JSON/watch modes, and an interactive kill TUI."
 license = "MIT"
